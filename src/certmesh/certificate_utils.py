@@ -343,7 +343,7 @@ def _write_to_vault(
     vault_cl: hvac.Client | None,
 ) -> str:
     """Write PEM material to a Vault KV path (v1 or v2 based on config)."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
 
     if vault_cl is None:
         raise ConfigurationError(
@@ -384,7 +384,7 @@ def _write_to_secrets_manager(
     output_cfg: JsonDict,
 ) -> str:
     """Write PEM material to AWS Secrets Manager."""
-    from certmesh import secrets_manager_client as smc
+    from certmesh.backends import secrets_manager_client as smc
 
     template: str = output_cfg.get("sm_secret_name_template", "")
     if not template:

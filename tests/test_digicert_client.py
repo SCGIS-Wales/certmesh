@@ -10,7 +10,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from certmesh.digicert_client import (
+from certmesh.exceptions import (
+    DigiCertAPIError,
+    DigiCertAuthenticationError,
+    DigiCertCertificateNotReadyError,
+    DigiCertDownloadError,
+    DigiCertError,
+    DigiCertOrderNotFoundError,
+    DigiCertPollingTimeoutError,
+    DigiCertRateLimitError,
+)
+from certmesh.providers.digicert_client import (
     DigiCertCertificateDetail,
     IssuedCertificateSummary,
     OrderRequest,
@@ -25,16 +35,6 @@ from certmesh.digicert_client import (
     order_and_await_certificate,
     revoke_certificate,
     search_certificates,
-)
-from certmesh.exceptions import (
-    DigiCertAPIError,
-    DigiCertAuthenticationError,
-    DigiCertCertificateNotReadyError,
-    DigiCertDownloadError,
-    DigiCertError,
-    DigiCertOrderNotFoundError,
-    DigiCertPollingTimeoutError,
-    DigiCertRateLimitError,
 )
 
 JsonDict = dict[str, Any]
@@ -92,7 +92,7 @@ def mock_session() -> MagicMock:
 @pytest.fixture()
 def _patch_build_session(mock_session: MagicMock) -> MagicMock:
     """Patch ``_build_session`` to return our mock session."""
-    with patch("certmesh.digicert_client._build_session", return_value=mock_session):
+    with patch("certmesh.providers.digicert_client._build_session", return_value=mock_session):
         yield mock_session
 
 
@@ -936,10 +936,13 @@ class TestOrderAndAwaitCertificate:
         order_req = OrderRequest(common_name="test.example.com")
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr") as mock_csr,
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr") as mock_csr,
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
         ):
             mock_keygen.return_value = MagicMock()
             mock_csr.return_value = MagicMock()
@@ -975,11 +978,14 @@ class TestOrderAndAwaitCertificate:
         order_req = OrderRequest(common_name="test.example.com")
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr"),
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
-            patch("certmesh.digicert_client.time.sleep"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr"),
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.time.sleep"),
         ):
             mock_keygen.return_value = MagicMock()
 
@@ -1004,10 +1010,13 @@ class TestOrderAndAwaitCertificate:
         order_req = OrderRequest(common_name="test.com")
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr"),
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr"),
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
         ):
             mock_keygen.return_value = MagicMock()
 
@@ -1038,11 +1047,14 @@ class TestOrderAndAwaitCertificate:
         order_req = OrderRequest(common_name="test.com")
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr"),
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
-            patch("certmesh.digicert_client.time.sleep"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr"),
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.time.sleep"),
         ):
             mock_keygen.return_value = MagicMock()
 
@@ -1064,10 +1076,13 @@ class TestOrderAndAwaitCertificate:
         order_req = OrderRequest(common_name="test.com")
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr"),
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr"),
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
         ):
             mock_keygen.return_value = MagicMock()
 
@@ -1104,10 +1119,13 @@ class TestOrderAndAwaitCertificate:
         )
 
         with (
-            patch("certmesh.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
-            patch("certmesh.digicert_client.cu.private_key_to_pem", return_value=private_key_pem),
-            patch("certmesh.digicert_client.cu.build_csr"),
-            patch("certmesh.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
+            patch("certmesh.providers.digicert_client.cu.generate_rsa_private_key") as mock_keygen,
+            patch(
+                "certmesh.providers.digicert_client.cu.private_key_to_pem",
+                return_value=private_key_pem,
+            ),
+            patch("certmesh.providers.digicert_client.cu.build_csr"),
+            patch("certmesh.providers.digicert_client.cu.csr_to_pem", return_value="CSR-PEM"),
         ):
             mock_keygen.return_value = MagicMock()
 

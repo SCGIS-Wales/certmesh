@@ -10,13 +10,16 @@ Create a default fully qualified app name.
 */}}
 {{- define "certmesh.fullname" -}}
 {{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- $name := .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $name | trunc 63 | trimSuffix "-" }}{{- else }}{{- $name }}{{- end }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- $base := .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- $base := printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

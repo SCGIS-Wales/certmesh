@@ -22,6 +22,17 @@ data:
         vault_path_template: {{ .Values.digicert.output.vaultPathTemplate | quote }}
         sm_secret_name_template: {{ .Values.digicert.output.smSecretNameTemplate | quote }}
         sm_region: {{ .Values.digicert.output.smRegion | quote }}
+    {{- if .Values.venafi.enabled }}
+    venafi:
+      base_url: {{ .Values.venafi.baseUrl | quote }}
+      auth_method: {{ .Values.venafi.authMethod | quote }}
+      oauth_client_id: {{ .Values.venafi.oauthClientId | quote }}
+      oauth_scope: {{ .Values.venafi.oauthScope | quote }}
+      tls_verify: {{ .Values.venafi.tlsVerify }}
+      output:
+        destination: {{ .Values.venafi.output.destination | quote }}
+        base_path: {{ .Values.venafi.output.basePath | quote }}
+    {{- end }}
     acm:
       region: {{ .Values.acm.region | quote }}
     logging:

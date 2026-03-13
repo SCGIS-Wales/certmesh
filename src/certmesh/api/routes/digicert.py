@@ -37,7 +37,7 @@ async def list_certificates(
     claims: Any = Depends(_get_auth),
 ) -> PaginatedResponse:
     """List issued certificates."""
-    from certmesh import digicert_client as dc
+    from certmesh.providers import digicert_client as dc
 
     cfg = request.app.state.config["digicert"]
     session = dc._build_session(cfg)
@@ -58,7 +58,7 @@ async def search_certificates(
     claims: Any = Depends(_get_auth),
 ) -> PaginatedResponse:
     """Search certificates by criteria."""
-    from certmesh import digicert_client as dc
+    from certmesh.providers import digicert_client as dc
 
     cfg = request.app.state.config["digicert"]
     session = dc._build_session(cfg)
@@ -86,7 +86,7 @@ async def get_certificate(
     claims: Any = Depends(_get_auth),
 ) -> DigiCertCertificateResponse:
     """Get details of a specific certificate order."""
-    from certmesh import digicert_client as dc
+    from certmesh.providers import digicert_client as dc
 
     cfg = request.app.state.config["digicert"]
     session = dc._build_session(cfg)
@@ -107,8 +107,8 @@ async def order_certificate(
     claims: Any = Depends(_get_auth),
 ) -> DigiCertOrderResponse:
     """Order a new certificate and await issuance."""
-    from certmesh import digicert_client as dc
     from certmesh.certificate_utils import SubjectInfo
+    from certmesh.providers import digicert_client as dc
 
     cfg = request.app.state.config["digicert"]
     vault_cl = getattr(request.app.state, "vault_client", None)
@@ -146,7 +146,7 @@ async def revoke_certificate(
     claims: Any = Depends(_get_auth),
 ) -> dict[str, str]:
     """Revoke a certificate."""
-    from certmesh import digicert_client as dc
+    from certmesh.providers import digicert_client as dc
 
     cfg = request.app.state.config["digicert"]
     session = dc._build_session(cfg)

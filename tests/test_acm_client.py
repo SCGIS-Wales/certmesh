@@ -9,7 +9,14 @@ from unittest.mock import MagicMock, patch
 import botocore.exceptions
 import pytest
 
-from certmesh.acm_client import (
+from certmesh.exceptions import (
+    ACMError,
+    ACMExportError,
+    ACMPrivateCAError,
+    ACMRequestError,
+    ACMValidationError,
+)
+from certmesh.providers.acm_client import (
     ACMCertificateDetail,
     ACMCertificateSummary,
     ACMValidationRecord,
@@ -27,13 +34,6 @@ from certmesh.acm_client import (
     request_certificate,
     revoke_private_certificate,
     wait_for_issuance,
-)
-from certmesh.exceptions import (
-    ACMError,
-    ACMExportError,
-    ACMPrivateCAError,
-    ACMRequestError,
-    ACMValidationError,
 )
 
 JsonDict = dict[str, Any]
@@ -120,7 +120,7 @@ class TestArnShortId:
 
 
 class TestRequestCertificate:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_basic_request(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -137,7 +137,7 @@ class TestRequestCertificate:
         assert call_kwargs["ValidationMethod"] == "DNS"
         assert call_kwargs["KeyAlgorithm"] == "RSA_2048"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_with_sans_and_tags(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -160,7 +160,7 @@ class TestRequestCertificate:
         assert call_kwargs["SubjectAlternativeNames"] == sans
         assert call_kwargs["Tags"] == tags
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_with_idempotency_token(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -172,7 +172,7 @@ class TestRequestCertificate:
         call_kwargs = mock_client.request_certificate.call_args[1]
         assert call_kwargs["IdempotencyToken"] == "my-token"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_override_validation_method(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -184,7 +184,7 @@ class TestRequestCertificate:
         call_kwargs = mock_client.request_certificate.call_args[1]
         assert call_kwargs["ValidationMethod"] == "EMAIL"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_override_key_algorithm(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -204,7 +204,7 @@ class TestRequestCertificate:
         with pytest.raises(ACMRequestError, match="Invalid key algorithm"):
             request_certificate(acm_cfg, _SAMPLE_DOMAIN, key_algorithm="INVALID_ALGO")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_acm_request_error(
         self, mock_build: MagicMock, acm_cfg: JsonDict
     ) -> None:
@@ -224,7 +224,7 @@ class TestRequestCertificate:
 
 
 class TestDescribeCertificate:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_returns_detail_dataclass(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -261,7 +261,7 @@ class TestDescribeCertificate:
         assert detail.renewal_eligibility == "ELIGIBLE"
         assert len(detail.in_use_by) == 1
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_handles_minimal_response(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -273,7 +273,7 @@ class TestDescribeCertificate:
         assert detail.domain_name == ""
         assert detail.status == ""
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_acm_error(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -292,7 +292,7 @@ class TestDescribeCertificate:
 
 
 class TestListCertificates:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_returns_summaries(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -321,7 +321,7 @@ class TestListCertificates:
         assert results[0].certificate_arn == _SAMPLE_CERT_ARN
         assert results[0].in_use is True
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_with_status_filter(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -340,7 +340,7 @@ class TestListCertificates:
             "PENDING_VALIDATION",
         ]
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_max_items_stops_early(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -367,7 +367,7 @@ class TestListCertificates:
 
         assert len(results) == 2
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_multiple_pages(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -407,7 +407,7 @@ class TestListCertificates:
         assert results[0].domain_name == "a.example.com"
         assert results[1].domain_name == "b.example.com"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_empty_result(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -421,7 +421,7 @@ class TestListCertificates:
         results = list_certificates(acm_cfg)
         assert results == []
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_acm_error(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -442,8 +442,8 @@ class TestListCertificates:
 
 
 class TestExportCertificate:
-    @patch("certmesh.acm_client.cu.assemble_bundle")
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client.cu.assemble_bundle")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_successful_export(
         self,
         mock_build: MagicMock,
@@ -472,7 +472,7 @@ class TestExportCertificate:
         assemble_kwargs = mock_assemble.call_args[1]
         assert assemble_kwargs["source_id"] == "abcd-1234"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_no_chain(
         self,
         mock_build: MagicMock,
@@ -500,7 +500,7 @@ class TestExportCertificate:
         with pytest.raises(ACMExportError, match="at least 4 bytes"):
             export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_export_error(
         self, mock_build: MagicMock, acm_cfg: JsonDict
     ) -> None:
@@ -514,7 +514,7 @@ class TestExportCertificate:
         with pytest.raises(ACMExportError, match="ResourceNotFoundException"):
             export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_empty_certificate_body_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -527,7 +527,7 @@ class TestExportCertificate:
         with pytest.raises(ACMExportError, match="empty certificate"):
             export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_empty_private_key_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -547,7 +547,7 @@ class TestExportCertificate:
 
 
 class TestDeleteCertificate:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_successful_delete(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -556,7 +556,7 @@ class TestDeleteCertificate:
 
         mock_client.delete_certificate.assert_called_once_with(CertificateArn=_SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_acm_error(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -575,7 +575,7 @@ class TestDeleteCertificate:
 
 
 class TestRenewCertificate:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_successful_renew(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -584,7 +584,7 @@ class TestRenewCertificate:
 
         mock_client.renew_certificate.assert_called_once_with(CertificateArn=_SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises_acm_error(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -603,7 +603,7 @@ class TestRenewCertificate:
 
 
 class TestGetValidationRecords:
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_returns_dns_records(self, mock_describe: MagicMock, acm_cfg: JsonDict) -> None:
         mock_describe.return_value = ACMCertificateDetail(
             certificate_arn=_SAMPLE_CERT_ARN,
@@ -634,7 +634,7 @@ class TestGetValidationRecords:
         assert records[0].resource_record_name == "_acme.example.com"
         assert records[0].resource_record_type == "CNAME"
 
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_returns_email_records(self, mock_describe: MagicMock, acm_cfg: JsonDict) -> None:
         mock_describe.return_value = ACMCertificateDetail(
             certificate_arn=_SAMPLE_CERT_ARN,
@@ -661,7 +661,7 @@ class TestGetValidationRecords:
         assert records[0].validation_method == "EMAIL"
         assert "admin@example.com" in records[0].validation_emails
 
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_multiple_domains(self, mock_describe: MagicMock, acm_cfg: JsonDict) -> None:
         mock_describe.return_value = ACMCertificateDetail(
             certificate_arn=_SAMPLE_CERT_ARN,
@@ -696,7 +696,7 @@ class TestGetValidationRecords:
         records = get_validation_records(acm_cfg, _SAMPLE_CERT_ARN)
         assert len(records) == 2
 
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_no_validation_options_raises(
         self, mock_describe: MagicMock, acm_cfg: JsonDict
     ) -> None:
@@ -710,7 +710,7 @@ class TestGetValidationRecords:
         with pytest.raises(ACMValidationError, match="No DomainValidationOptions"):
             get_validation_records(acm_cfg, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_describe_failure_raises_validation_error(
         self, mock_describe: MagicMock, acm_cfg: JsonDict
     ) -> None:
@@ -726,8 +726,8 @@ class TestGetValidationRecords:
 
 
 class TestWaitForIssuance:
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_returns_immediately_when_issued(
         self,
         mock_describe: MagicMock,
@@ -745,8 +745,8 @@ class TestWaitForIssuance:
         assert detail.status == "ISSUED"
         mock_sleep.assert_not_called()
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_polls_until_issued(
         self,
         mock_describe: MagicMock,
@@ -772,8 +772,8 @@ class TestWaitForIssuance:
         # Check interval from config (polling.interval_seconds = 1)
         mock_sleep.assert_called_with(1)
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_raises_on_failed_status(
         self,
         mock_describe: MagicMock,
@@ -790,8 +790,8 @@ class TestWaitForIssuance:
         with pytest.raises(ACMValidationError, match="terminal status 'FAILED'"):
             wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_raises_on_revoked_status(
         self,
         mock_describe: MagicMock,
@@ -807,8 +807,8 @@ class TestWaitForIssuance:
         with pytest.raises(ACMValidationError, match="terminal status 'REVOKED'"):
             wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_timeout_raises(
         self,
         mock_describe: MagicMock,
@@ -829,8 +829,8 @@ class TestWaitForIssuance:
         with pytest.raises(ACMValidationError, match="Timed out after 5s"):
             wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_override_interval_and_max_wait(
         self,
         mock_describe: MagicMock,
@@ -859,8 +859,8 @@ class TestWaitForIssuance:
         assert detail.status == "ISSUED"
         mock_sleep.assert_called_once_with(2)
 
-    @patch("certmesh.acm_client.time.sleep")
-    @patch("certmesh.acm_client.describe_certificate")
+    @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.describe_certificate")
     def test_validation_timed_out_is_terminal(
         self,
         mock_describe: MagicMock,
@@ -883,7 +883,7 @@ class TestWaitForIssuance:
 
 
 class TestIssuePrivateCertificate:
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_successful_issue(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -901,7 +901,7 @@ class TestIssuePrivateCertificate:
         assert call_kwargs["SigningAlgorithm"] == "SHA256WITHRSA"
         assert call_kwargs["Validity"] == {"Value": 365, "Type": "DAYS"}
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_with_override_params(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -932,7 +932,7 @@ class TestIssuePrivateCertificate:
         with pytest.raises(ACMPrivateCAError, match="Private CA ARN is required"):
             issue_private_certificate(acm_cfg, "CSR_PEM")
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_client_error_raises(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -951,7 +951,7 @@ class TestIssuePrivateCertificate:
 
 
 class TestGetPrivateCertificate:
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_successful_get(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -969,7 +969,7 @@ class TestGetPrivateCertificate:
             CertificateArn=_SAMPLE_CERT_ARN,
         )
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_with_custom_ca_arn(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -988,7 +988,7 @@ class TestGetPrivateCertificate:
         with pytest.raises(ACMPrivateCAError, match="Private CA ARN is required"):
             get_private_certificate(acm_cfg, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_request_in_progress_exception(
         self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict
     ) -> None:
@@ -1002,7 +1002,7 @@ class TestGetPrivateCertificate:
         with pytest.raises(ACMPrivateCAError, match="issuance is still in progress"):
             get_private_certificate(acm_cfg_with_ca, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_generic_client_error(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -1014,7 +1014,7 @@ class TestGetPrivateCertificate:
         with pytest.raises(ACMPrivateCAError, match="ResourceNotFoundException"):
             get_private_certificate(acm_cfg_with_ca, _SAMPLE_CERT_ARN)
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_empty_certificate_raises(
         self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict
     ) -> None:
@@ -1035,7 +1035,7 @@ class TestGetPrivateCertificate:
 
 
 class TestRevokePrivateCertificate:
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_successful_revoke(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -1052,7 +1052,7 @@ class TestRevokePrivateCertificate:
             RevocationReason="UNSPECIFIED",
         )
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_with_custom_reason(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -1067,7 +1067,7 @@ class TestRevokePrivateCertificate:
         call_kwargs = mock_pca.revoke_certificate.call_args[1]
         assert call_kwargs["RevocationReason"] == "KEY_COMPROMISE"
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_with_custom_ca_arn(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -1087,7 +1087,7 @@ class TestRevokePrivateCertificate:
         with pytest.raises(ACMPrivateCAError, match="Private CA ARN is required"):
             revoke_private_certificate(acm_cfg, _SAMPLE_CERT_ARN, "AA:BB")
 
-    @patch("certmesh.acm_client._build_acm_pca_client")
+    @patch("certmesh.providers.acm_client._build_acm_pca_client")
     def test_client_error_raises(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_pca = MagicMock()
         mock_build.return_value = mock_pca
@@ -1106,7 +1106,7 @@ class TestRevokePrivateCertificate:
 
 
 class TestListPrivateCertificates:
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_returns_private_certs_for_matching_ca(
         self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict
     ) -> None:
@@ -1155,7 +1155,7 @@ class TestListPrivateCertificates:
         assert all(r["Type"] == "PRIVATE" for r in results)
         assert all(r["CertificateAuthorityArn"] == _SAMPLE_CA_ARN for r in results)
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_describe_fallback_when_ca_arn_absent(
         self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict
     ) -> None:
@@ -1194,7 +1194,7 @@ class TestListPrivateCertificates:
         assert results[0]["CertificateArn"] == "arn:cert/1"
         assert mock_client.describe_certificate.call_count == 2
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_describe_fallback_skips_on_error(
         self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict
     ) -> None:
@@ -1225,7 +1225,7 @@ class TestListPrivateCertificates:
 
         assert len(results) == 0
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_max_items_limits(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -1254,7 +1254,7 @@ class TestListPrivateCertificates:
         with pytest.raises(ACMPrivateCAError, match="Private CA ARN is required"):
             list_private_certificates(acm_cfg)
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_client_error_raises(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -1269,7 +1269,7 @@ class TestListPrivateCertificates:
         with pytest.raises(ACMPrivateCAError, match="AccessDeniedException"):
             list_private_certificates(acm_cfg_with_ca)
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_empty_result(self, mock_build: MagicMock, acm_cfg_with_ca: JsonDict) -> None:
         mock_client = MagicMock()
         mock_build.return_value = mock_client
@@ -1290,8 +1290,8 @@ class TestListPrivateCertificates:
 
 
 class TestExportAndPersist:
-    @patch("certmesh.acm_client.cu.persist_bundle")
-    @patch("certmesh.acm_client.export_certificate")
+    @patch("certmesh.providers.acm_client.cu.persist_bundle")
+    @patch("certmesh.providers.acm_client.export_certificate")
     def test_successful_export_and_persist(
         self,
         mock_export: MagicMock,
@@ -1312,8 +1312,8 @@ class TestExportAndPersist:
             vault_client=None,
         )
 
-    @patch("certmesh.acm_client.cu.persist_bundle")
-    @patch("certmesh.acm_client.export_certificate")
+    @patch("certmesh.providers.acm_client.cu.persist_bundle")
+    @patch("certmesh.providers.acm_client.export_certificate")
     def test_with_vault_client(
         self,
         mock_export: MagicMock,
@@ -1336,7 +1336,7 @@ class TestExportAndPersist:
             vault_client=mock_vault,
         )
 
-    @patch("certmesh.acm_client.export_certificate")
+    @patch("certmesh.providers.acm_client.export_certificate")
     def test_export_failure_propagates(
         self,
         mock_export: MagicMock,
@@ -1367,7 +1367,7 @@ class TestExportCertificateFunctional:
     the returned CertificateBundle is correct and complete.
     """
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_full_export_with_chain_produces_valid_bundle(
         self,
         mock_build: MagicMock,
@@ -1406,7 +1406,7 @@ class TestExportCertificateFunctional:
             Passphrase=b"securepass",
         )
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_full_export_without_chain_still_valid(
         self,
         mock_build: MagicMock,
@@ -1435,7 +1435,7 @@ class TestExportCertificateFunctional:
         assert bundle.serial_number
         assert bundle.source_id == "abcd-1234"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_preserves_exact_pem_content(
         self,
         mock_build: MagicMock,
@@ -1469,7 +1469,7 @@ class TestExportCertificateFunctional:
         decoded = base64.b64decode(bundle.certificate_pem_b64)
         assert decoded == self_signed_cert_pem
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_serial_number_matches_certificate(
         self,
         mock_build: MagicMock,
@@ -1498,7 +1498,7 @@ class TestExportCertificateFunctional:
         expected_serial = format(parsed.serial_number, "x")
         assert bundle.serial_number == expected_serial
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_not_after_matches_certificate(
         self,
         mock_build: MagicMock,
@@ -1522,7 +1522,7 @@ class TestExportCertificateFunctional:
         parsed = x509_mod.load_pem_x509_certificate(self_signed_cert_pem)
         assert bundle.not_after == parsed.not_valid_after_utc
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_source_id_derives_from_arn(
         self,
         mock_build: MagicMock,
@@ -1545,7 +1545,7 @@ class TestExportCertificateFunctional:
 
         assert bundle.source_id == "unique-export-id-99"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_passphrase_boundary_4_bytes(
         self,
         mock_build: MagicMock,
@@ -1572,7 +1572,7 @@ class TestExportCertificateFunctional:
         with pytest.raises(ACMExportError, match="at least 4 bytes"):
             export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"abc")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_request_not_exportable_raises(
         self, mock_build: MagicMock, acm_cfg: JsonDict
     ) -> None:
@@ -1587,7 +1587,7 @@ class TestExportCertificateFunctional:
         with pytest.raises(ACMExportError, match="RequestInProgressException"):
             export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_invalid_arn_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         """Invalid ARN returns ValidationException from AWS."""
         mock_client = MagicMock()
@@ -1600,7 +1600,7 @@ class TestExportCertificateFunctional:
         with pytest.raises(ACMExportError, match="ValidationException"):
             export_certificate(acm_cfg, "invalid-arn", b"passwd")
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_access_denied_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
         """IAM permission denied raises ACMExportError."""
         mock_client = MagicMock()
@@ -1621,7 +1621,7 @@ class TestExportAndPersistFunctional:
     written on disk, ensuring no data is lost in the pipeline.
     """
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_full_export_to_filesystem(
         self,
         mock_build: MagicMock,
@@ -1674,7 +1674,7 @@ class TestExportAndPersistFunctional:
             written_key = f.read()
         assert written_key == key_str
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_persist_key_file_permissions(
         self,
         mock_build: MagicMock,
@@ -1711,7 +1711,7 @@ class TestExportAndPersistFunctional:
         mode = stat.S_IMODE(key_stat.st_mode)
         assert mode == 0o600, f"Expected key file mode 0600, got {oct(mode)}"
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_persist_creates_output_directory(
         self,
         mock_build: MagicMock,
@@ -1745,7 +1745,7 @@ class TestExportAndPersistFunctional:
         assert nested.exists()
         assert "filesystem_cert" in result
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_persist_idempotent(
         self,
         mock_build: MagicMock,
@@ -1786,7 +1786,7 @@ class TestExportAndPersistFunctional:
         with open(result2["filesystem_cert"]) as f:
             assert f.read() == cert_str
 
-    @patch("certmesh.acm_client._build_acm_client")
+    @patch("certmesh.providers.acm_client._build_acm_client")
     def test_export_different_arns_produce_different_files(
         self,
         mock_build: MagicMock,
@@ -1829,7 +1829,7 @@ class TestExportAndPersistFunctional:
         assert os.path.exists(result1["filesystem_cert"])
         assert os.path.exists(result2["filesystem_cert"])
 
-    @patch("certmesh.acm_client.export_certificate")
+    @patch("certmesh.providers.acm_client.export_certificate")
     def test_export_failure_does_not_leave_partial_files(
         self,
         mock_export: MagicMock,

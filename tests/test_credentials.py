@@ -59,7 +59,7 @@ class TestResolveDigicertAPIKey:
         mock_cl = MagicMock()
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("certmesh.vault_client.read_secret_field", return_value="vault-key"),
+            patch("certmesh.backends.vault_client.read_secret_field", return_value="vault-key"),
         ):
             key = resolve_digicert_api_key(vault_cfg, mock_cl)
         assert key == "vault-key"
@@ -84,7 +84,7 @@ class TestResolveVenafiCredentials:
         expected = {"username": "vu", "password": "vp"}
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("certmesh.vault_client.read_all_secret_fields", return_value=expected),
+            patch("certmesh.backends.vault_client.read_all_secret_fields", return_value=expected),
         ):
             creds = resolve_venafi_credentials(vault_cfg, mock_cl)
         assert creds == expected

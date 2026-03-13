@@ -43,6 +43,38 @@ spec:
               {{- include "certmesh.selectorLabels" $ | nindent 14 }}
         {{- end }}
       {{- end }}
+      {{- if .Values.vaultPkiTls.enabled }}
+      initContainers:
+        - name: vault-tls-init
+          image: hashicorp/vault:1.15
+          command:
+            - sh
+            - -c
+            - |
+              vault write -format=json \
+                {{ .Values.vaultPkiTls.mountPoint }}/issue/{{ .Values.vaultPkiTls.roleName }} \
+                common_name={{ .Values.vaultPkiTls.commonName }} \
+                ttl={{ .Values.vaultPkiTls.ttl }} \
+                {{- range .Values.vaultPkiTls.sans }}
+                alt_names={{ . }} \
+                {{- end }}
+              | tee /tmp/tls-response.json
+
+              cat /tmp/tls-response.json | jq -r '.data.certificate' > /tls/tls.crt
+              cat /tmp/tls-response.json | jq -r '.data.private_key' > /tls/tls.key
+              cat /tmp/tls-response.json | jq -r '.data.issuing_ca' > /tls/ca.crt
+              chmod 600 /tls/tls.key
+          env:
+            - name: VAULT_ADDR
+              value: {{ .Values.vault.url | quote }}
+            {{- if eq .Values.vault.authMethod "approle" }}
+            - name: VAULT_TOKEN
+              value: ""  # Will authenticate via approle in entrypoint
+            {{- end }}
+          volumeMounts:
+            - name: vault-tls
+              mountPath: /tls
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           image: {{ include "certmesh.image" . }}
@@ -81,6 +113,8 @@ spec:
             - name: CM_OAUTH2_REQUIRED_SCOPES
               value: {{ .Values.oauth2.requiredScopes | quote }}
             {{- end }}
+            - name: CM_OAUTH2_PROVIDER_HINT
+              value: {{ .Values.oauth2.providerHint | default "generic" | quote }}
             # Vault
             {{- if .Values.vault.enabled }}
             - name: CM_VAULT_URL
@@ -89,11 +123,56 @@ spec:
               value: {{ .Values.vault.authMethod | quote }}
             - name: CM_VAULT_KV_VERSION
               value: {{ .Values.vault.kvVersion | quote }}
+            {{- if eq .Values.vault.authMethod "approle" }}
+            {{- if .Values.vault.approle.existingSecret }}
+            - name: CM_VAULT_ROLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.vault.approle.existingSecret }}
+                  key: {{ .Values.vault.approle.roleIdKey }}
+            - name: CM_VAULT_SECRET_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.vault.approle.existingSecret }}
+                  key: {{ .Values.vault.approle.secretIdKey }}
+            {{- end }}
+            {{- end }}
             {{- end }}
             # ACM
             {{- if .Values.acm.enabled }}
             - name: CM_ACM_REGION
               value: {{ .Values.acm.region | quote }}
+            {{- end }}
+            # Venafi
+            {{- if .Values.venafi.enabled }}
+            - name: CM_VENAFI_BASE_URL
+              value: {{ .Values.venafi.baseUrl | quote }}
+            - name: CM_VENAFI_AUTH_METHOD
+              value: {{ .Values.venafi.authMethod | quote }}
+            - name: CM_VENAFI_OAUTH_CLIENT_ID
+              value: {{ .Values.venafi.oauthClientId | quote }}
+            - name: CM_VENAFI_OAUTH_SCOPE
+              value: {{ .Values.venafi.oauthScope | quote }}
+            - name: CM_VENAFI_TLS_VERIFY
+              value: {{ .Values.venafi.tlsVerify | quote }}
+            {{- end }}
+            # Let's Encrypt
+            {{- if .Values.letsencrypt.enabled }}
+            - name: CM_LETSENCRYPT_ENABLED
+              value: "true"
+            - name: CM_LETSENCRYPT_DIRECTORY_URL
+              value: {{ .Values.letsencrypt.directoryUrl | quote }}
+            - name: CM_LETSENCRYPT_EMAIL
+              value: {{ .Values.letsencrypt.email | quote }}
+            - name: CM_LETSENCRYPT_CHALLENGE_TYPE
+              value: {{ .Values.letsencrypt.challengeType | quote }}
+            {{- end }}
+            # Vault PKI TLS
+            {{- if .Values.vaultPkiTls.enabled }}
+            - name: CM_API_TLS_CERT
+              value: {{ .Values.vaultPkiTls.certPath | quote }}
+            - name: CM_API_TLS_KEY
+              value: {{ .Values.vaultPkiTls.keyPath | quote }}
             {{- end }}
           livenessProbe:
             httpGet:
@@ -129,6 +208,11 @@ spec:
             - name: data
               mountPath: {{ .Values.persistence.mountPath }}
             {{- end }}
+            {{- if .Values.vaultPkiTls.enabled }}
+            - name: vault-tls
+              mountPath: /etc/tls
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -139,6 +223,12 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "certmesh.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.vaultPkiTls.enabled }}
+        - name: vault-tls
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -79,6 +79,7 @@ from certmesh.exceptions import (
     VaultPKIError,
     VenafiError,
 )
+from certmesh.logging_config import configure_logging as configure_structured_logging
 from certmesh.settings import build_config, configure_logging, validate_config
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,14 @@ def cli(
 
     cfg = build_config(config_file=config_file)
     configure_logging(cfg["logging"])
+
+    # Apply structured JSON / text logging on top of the base config.
+    # CLI defaults to human-readable "text" output; override via CM_LOG_FORMAT.
+    effective_log_level = cfg["logging"].get("level", "INFO")
+    configure_structured_logging(
+        level=effective_log_level,
+        log_format=os.environ.get("CM_LOG_FORMAT", "text"),
+    )
     ctx.obj["cfg"] = cfg
 
 
@@ -144,7 +153,7 @@ def cli(
 
 def _get_vault_client(cfg: JsonDict) -> Any:
     """Lazily build and authenticate a Vault client if needed."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
     from certmesh.credentials import vault_required
 
     if not vault_required(cfg):
@@ -192,7 +201,7 @@ def digicert() -> None:
 def digicert_list(ctx: click.Context, status: str, limit: int) -> None:
     """List certificates from DigiCert CertCentral."""
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -223,7 +232,7 @@ def digicert_search(
 ) -> None:
     """Search certificates in DigiCert CertCentral."""
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -247,7 +256,7 @@ def digicert_search(
 def digicert_describe(ctx: click.Context, cert_id: int) -> None:
     """Get full detail for a DigiCert certificate."""
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -267,7 +276,7 @@ def digicert_order(ctx: click.Context, cn: str, san: tuple[str, ...]) -> None:
     A private key and CSR are generated internally by the client.
     """
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -295,7 +304,7 @@ def digicert_download(ctx: click.Context, cert_id: int, key_file: str) -> None:
     was ordered.
     """
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -345,7 +354,7 @@ def digicert_revoke(
         click.echo("Error: either --cert-id or --order-id is required.", err=True)
         sys.exit(1)
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -379,7 +388,7 @@ def digicert_duplicate(
 ) -> None:
     """Request a duplicate certificate from DigiCert."""
     try:
-        from certmesh import digicert_client as dc
+        from certmesh.providers import digicert_client as dc
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -416,7 +425,7 @@ def venafi() -> None:
 def venafi_list(ctx: click.Context, limit: int, offset: int) -> None:
     """List certificates in Venafi TPP."""
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -443,7 +452,7 @@ def venafi_search(
 ) -> None:
     """Search certificates in Venafi TPP."""
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -465,7 +474,7 @@ def venafi_search(
 def venafi_describe(ctx: click.Context, guid: str) -> None:
     """Get full detail for a Venafi certificate."""
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -491,8 +500,8 @@ def venafi_request(
 ) -> None:
     """Request a new certificate in Venafi TPP."""
     try:
-        from certmesh import venafi_client as vn
         from certmesh.certificate_utils import SubjectInfo
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -518,7 +527,7 @@ def venafi_request(
 def venafi_renew(ctx: click.Context, guid: str) -> None:
     """Renew a certificate in Venafi TPP."""
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -542,7 +551,7 @@ def venafi_renew(ctx: click.Context, guid: str) -> None:
 def venafi_renew_bulk(ctx: click.Context, guid_file: str) -> None:
     """Renew multiple certificates from a GUID file."""
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -588,7 +597,7 @@ def venafi_revoke(
         click.echo("Error: either --dn or --thumbprint is required.", err=True)
         sys.exit(1)
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -616,7 +625,7 @@ def venafi_download(ctx: click.Context, guid: str) -> None:
     Uses renew_and_download_certificate to retrieve the certificate material.
     """
     try:
-        from certmesh import venafi_client as vn
+        from certmesh.providers import venafi_client as vn
 
         cfg = ctx.obj["cfg"]
         vault_cl = _get_vault_client(cfg)
@@ -660,7 +669,7 @@ def vault_pki_issue(
 ) -> None:
     """Issue a certificate from Vault PKI engine."""
     try:
-        from certmesh import vault_client as vc
+        from certmesh.backends import vault_client as vc
 
         cfg = ctx.obj["cfg"]
         client = vc.get_authenticated_client(cfg["vault"])
@@ -716,7 +725,7 @@ def vault_pki_sign(
 ) -> None:
     """Sign a CSR using Vault PKI engine."""
     try:
-        from certmesh import vault_client as vc
+        from certmesh.backends import vault_client as vc
 
         with open(csr_file) as f:
             csr_pem = f.read()
@@ -756,7 +765,7 @@ def vault_pki_sign(
 def vault_pki_list(ctx: click.Context) -> None:
     """List all certificates in Vault PKI engine."""
     try:
-        from certmesh import vault_client as vc
+        from certmesh.backends import vault_client as vc
 
         cfg = ctx.obj["cfg"]
         client = vc.get_authenticated_client(cfg["vault"])
@@ -773,7 +782,7 @@ def vault_pki_list(ctx: click.Context) -> None:
 def vault_pki_read(ctx: click.Context, serial: str) -> None:
     """Read a certificate from Vault PKI engine by serial number."""
     try:
-        from certmesh import vault_client as vc
+        from certmesh.backends import vault_client as vc
 
         cfg = ctx.obj["cfg"]
         client = vc.get_authenticated_client(cfg["vault"])
@@ -790,7 +799,7 @@ def vault_pki_read(ctx: click.Context, serial: str) -> None:
 def vault_pki_revoke(ctx: click.Context, serial: str) -> None:
     """Revoke a certificate in Vault PKI engine."""
     try:
-        from certmesh import vault_client as vc
+        from certmesh.backends import vault_client as vc
 
         cfg = ctx.obj["cfg"]
         client = vc.get_authenticated_client(cfg["vault"])
@@ -833,7 +842,7 @@ def acm_request(
 ) -> None:
     """Request a public TLS certificate from AWS ACM."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -859,7 +868,7 @@ def acm_request(
 def acm_list(ctx: click.Context, status: tuple[str, ...], region: str | None) -> None:
     """List certificates in AWS ACM."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -881,7 +890,7 @@ def acm_list(ctx: click.Context, status: tuple[str, ...], region: str | None) ->
 def acm_describe(ctx: click.Context, arn: str, region: str | None) -> None:
     """Describe an ACM certificate."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -914,7 +923,7 @@ def acm_export(
 ) -> None:
     """Export certificate and private key from ACM."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -951,7 +960,7 @@ def acm_export(
 def acm_renew(ctx: click.Context, arn: str, region: str | None) -> None:
     """Trigger renewal of an eligible ACM managed certificate."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -970,7 +979,7 @@ def acm_renew(ctx: click.Context, arn: str, region: str | None) -> None:
 def acm_delete(ctx: click.Context, arn: str, region: str | None) -> None:
     """Delete a certificate from AWS ACM."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -989,7 +998,7 @@ def acm_delete(ctx: click.Context, arn: str, region: str | None) -> None:
 def acm_validation_records(ctx: click.Context, arn: str, region: str | None) -> None:
     """Get DNS/email validation records for a pending ACM certificate."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -1008,7 +1017,7 @@ def acm_validation_records(ctx: click.Context, arn: str, region: str | None) -> 
 def acm_wait(ctx: click.Context, arn: str, region: str | None) -> None:
     """Wait for an ACM certificate to be issued."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -1047,7 +1056,7 @@ def acm_pca_issue(
 ) -> None:
     """Issue a certificate from AWS Private CA."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -1075,7 +1084,7 @@ def acm_pca_issue(
 def acm_pca_get(ctx: click.Context, ca_arn: str, cert_arn: str, region: str | None) -> None:
     """Retrieve a certificate issued by AWS Private CA."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -1120,7 +1129,7 @@ def acm_pca_revoke(
 ) -> None:
     """Revoke a certificate issued by AWS Private CA."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]
@@ -1141,7 +1150,7 @@ def acm_pca_revoke(
 def acm_pca_list(ctx: click.Context, ca_arn: str, region: str | None) -> None:
     """List certificates issued by AWS Private CA."""
     try:
-        from certmesh import acm_client
+        from certmesh.providers import acm_client
 
         cfg = ctx.obj["cfg"]
         acm_cfg = cfg["acm"]

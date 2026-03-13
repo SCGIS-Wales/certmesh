@@ -28,6 +28,7 @@ from prometheus_client import make_asgi_app
 from certmesh.api.auth import JWTBearer, OAuth2Config
 from certmesh.api.middleware import RequestIDMiddleware, register_exception_handlers
 from certmesh.api.routes import acm, digicert, health, vault_pki, venafi
+from certmesh.logging_config import configure_logging as configure_structured_logging
 from certmesh.settings import build_config, configure_logging
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,12 @@ def _build_oauth2_config() -> OAuth2Config:
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup + shutdown."""
+    # Structured JSON logging for the API — always JSON in production.
+    configure_structured_logging(
+        level=os.environ.get("CM_LOG_LEVEL", "INFO"),
+        log_format="json",
+    )
+
     config_file = os.environ.get("CM_CONFIG_FILE")
     cfg = build_config(config_file=config_file)
     configure_logging(cfg.get("logging", {}))
@@ -71,7 +78,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.vault_client = None
     if vault_cfg.get("url"):
         try:
-            from certmesh import vault_client as vc
+            from certmesh.backends import vault_client as vc
 
             client = vc.create_client(vault_cfg)
             vc.authenticate(client, vault_cfg)

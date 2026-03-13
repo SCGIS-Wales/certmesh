@@ -32,7 +32,7 @@ async def list_certificates(
     claims: Any = Depends(_get_auth),
 ) -> list[VaultPKICertificateResponse]:
     """List certificates issued by Vault PKI."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
 
     vault_cl = getattr(request.app.state, "vault_client", None)
     if vault_cl is None:
@@ -51,7 +51,7 @@ async def issue_certificate(
     claims: Any = Depends(_get_auth),
 ) -> VaultPKICertificateResponse:
     """Issue a new certificate via Vault PKI."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
 
     vault_cl = request.app.state.vault_client
     cfg = request.app.state.config.get("vault", {}).get("pki", {})
@@ -78,7 +78,7 @@ async def get_certificate(
     claims: Any = Depends(_get_auth),
 ) -> VaultPKICertificateResponse:
     """Read a specific certificate by serial number."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
 
     vault_cl = request.app.state.vault_client
     cfg = request.app.state.config.get("vault", {}).get("pki", {})
@@ -97,7 +97,7 @@ async def sign_csr(
     claims: Any = Depends(_get_auth),
 ) -> VaultPKICertificateResponse:
     """Sign a CSR using Vault PKI."""
-    from certmesh import vault_client as vc
+    from certmesh.backends import vault_client as vc
 
     vault_cl = request.app.state.vault_client
     cfg = request.app.state.config.get("vault", {}).get("pki", {})
