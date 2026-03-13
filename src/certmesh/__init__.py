@@ -29,4 +29,4 @@ Supported providers
 * AWS ACM (request public certs, export, private CA issue)
 """
 
-__version__ = "3.0.2"
+__version__ = "3.0.3"
