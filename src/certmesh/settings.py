@@ -49,6 +49,7 @@ _DEFAULTS: JsonDict = {
             "region": None,
             "header_value": None,
         },
+        "kv_version": 2,
         "pki": {
             "mount_point": "pki",
             "role_name": "",
@@ -63,6 +64,12 @@ _DEFAULTS: JsonDict = {
     "digicert": {
         "base_url": "https://www.digicert.com/services/v2",
         "timeout_seconds": 30,
+        "tls_verify": True,
+        "ca_bundle": "",
+        "connection_pool": {
+            "pool_connections": 10,
+            "pool_maxsize": 20,
+        },
         "output": {
             "destination": "filesystem",
             "base_path": "/etc/certmesh/tls/digicert",
@@ -70,6 +77,8 @@ _DEFAULTS: JsonDict = {
             "key_filename": "{order_id}_key.pem",
             "chain_filename": "{order_id}_chain.pem",
             "vault_path_template": "secret/certmesh/tls/digicert/{order_id}",
+            "sm_secret_name_template": "",
+            "sm_region": "",
         },
         "certificate": {
             "key_size": 4096,
@@ -114,6 +123,8 @@ _DEFAULTS: JsonDict = {
             "key_filename": "{guid}_key.pem",
             "chain_filename": "{guid}_chain.pem",
             "vault_path_template": "secret/certmesh/tls/venafi/{guid}",
+            "sm_secret_name_template": "",
+            "sm_region": "",
         },
         "certificate": {
             "key_size": 4096,
@@ -146,6 +157,8 @@ _DEFAULTS: JsonDict = {
             "cert_filename": "{cert_arn_short}_cert.pem",
             "key_filename": "{cert_arn_short}_key.pem",
             "chain_filename": "{cert_arn_short}_chain.pem",
+            "sm_secret_name_template": "",
+            "sm_region": "",
         },
         "certificate": {
             "key_algorithm": "RSA_2048",
@@ -240,6 +253,7 @@ def _env_overrides() -> JsonDict:
     _sset(overrides, ["vault", "aws_iam", "mount_point"], e("CM_VAULT_AWS_MOUNT_POINT"))
     _sset(overrides, ["vault", "aws_iam", "region"], e("CM_VAULT_AWS_REGION"))
     _sset(overrides, ["vault", "aws_iam", "header_value"], e("CM_VAULT_AWS_HEADER_VALUE"))
+    _sset(overrides, ["vault", "kv_version"], _int(e("CM_VAULT_KV_VERSION")))
     _sset(overrides, ["vault", "pki", "mount_point"], e("CM_VAULT_PKI_MOUNT"))
     _sset(overrides, ["vault", "pki", "role_name"], e("CM_VAULT_PKI_ROLE"))
     _sset(overrides, ["vault", "pki", "ttl"], e("CM_VAULT_PKI_TTL"))
@@ -249,12 +263,34 @@ def _env_overrides() -> JsonDict:
     # DigiCert
     _sset(overrides, ["digicert", "base_url"], e("CM_DIGICERT_BASE_URL"))
     _sset(overrides, ["digicert", "timeout_seconds"], _int(e("CM_DIGICERT_TIMEOUT")))
+    _sset(overrides, ["digicert", "tls_verify"], _bool(e("CM_DIGICERT_TLS_VERIFY")))
+    _sset(overrides, ["digicert", "ca_bundle"], e("CM_DIGICERT_CA_BUNDLE"))
+    _sset(
+        overrides,
+        ["digicert", "connection_pool", "pool_connections"],
+        _int(e("CM_DIGICERT_POOL_CONNECTIONS")),
+    )
+    _sset(
+        overrides,
+        ["digicert", "connection_pool", "pool_maxsize"],
+        _int(e("CM_DIGICERT_POOL_MAXSIZE")),
+    )
     _sset(overrides, ["digicert", "output", "destination"], e("CM_DIGICERT_OUTPUT_DEST"))
     _sset(overrides, ["digicert", "output", "base_path"], e("CM_DIGICERT_OUTPUT_PATH"))
     _sset(
         overrides,
         ["digicert", "output", "vault_path_template"],
         e("CM_DIGICERT_VAULT_PATH"),
+    )
+    _sset(
+        overrides,
+        ["digicert", "output", "sm_secret_name_template"],
+        e("CM_DIGICERT_SM_SECRET_NAME"),
+    )
+    _sset(
+        overrides,
+        ["digicert", "output", "sm_region"],
+        e("CM_DIGICERT_SM_REGION"),
     )
     _sset(
         overrides,
@@ -323,6 +359,16 @@ def _env_overrides() -> JsonDict:
         ["venafi", "output", "vault_path_template"],
         e("CM_VENAFI_VAULT_PATH"),
     )
+    _sset(
+        overrides,
+        ["venafi", "output", "sm_secret_name_template"],
+        e("CM_VENAFI_SM_SECRET_NAME"),
+    )
+    _sset(
+        overrides,
+        ["venafi", "output", "sm_region"],
+        e("CM_VENAFI_SM_REGION"),
+    )
     _sset(overrides, ["venafi", "certificate", "key_size"], _int(e("CM_VENAFI_KEY_SIZE")))
     _sset(overrides, ["venafi", "approval", "reason"], e("CM_VENAFI_APPROVAL_REASON"))
 
@@ -330,6 +376,16 @@ def _env_overrides() -> JsonDict:
     _sset(overrides, ["acm", "region"], e("CM_ACM_REGION"))
     _sset(overrides, ["acm", "output", "destination"], e("CM_ACM_OUTPUT_DEST"))
     _sset(overrides, ["acm", "output", "base_path"], e("CM_ACM_OUTPUT_PATH"))
+    _sset(
+        overrides,
+        ["acm", "output", "sm_secret_name_template"],
+        e("CM_ACM_SM_SECRET_NAME"),
+    )
+    _sset(
+        overrides,
+        ["acm", "output", "sm_region"],
+        e("CM_ACM_SM_REGION"),
+    )
     _sset(
         overrides,
         ["acm", "certificate", "key_algorithm"],
@@ -366,6 +422,30 @@ def _env_overrides() -> JsonDict:
 _VAULT_AUTH_METHODS: frozenset[str] = frozenset({"approle", "ldap", "aws_iam"})
 _VENAFI_AUTH_METHODS: frozenset[str] = frozenset({"oauth", "ldap"})
 _OUTPUT_DESTINATIONS: frozenset[str] = frozenset({"filesystem", "vault", "both"})
+_VALID_DESTINATION_VALUES: frozenset[str] = frozenset({"filesystem", "vault", "secrets_manager"})
+
+
+def normalize_destinations(raw: str | list[str]) -> list[str]:
+    """Normalise the ``output.destination`` value to a list of destination strings.
+
+    Accepted inputs:
+    - Legacy string ``"filesystem"`` / ``"vault"`` / ``"both"``
+    - New-style list ``["filesystem", "vault", "secrets_manager"]``
+    """
+    if isinstance(raw, list):
+        result = [str(d).strip() for d in raw if str(d).strip()]
+    elif raw == "both":
+        result = ["filesystem", "vault"]
+    else:
+        result = [str(raw).strip()] if str(raw).strip() else []
+
+    invalid = set(result) - _VALID_DESTINATION_VALUES
+    if invalid:
+        raise ConfigurationError(
+            f"Invalid output destination(s): {sorted(invalid)}. "
+            f"Supported: {sorted(_VALID_DESTINATION_VALUES)}."
+        )
+    return result
 
 
 def validate_config(cfg: JsonDict) -> None:
@@ -393,15 +473,26 @@ def _validate_vault(vault: JsonDict) -> None:
 
 
 def _validate_digicert(digicert: JsonDict) -> None:
-    dest: str = digicert.get("output", {}).get("destination", "")
-    if dest not in _OUTPUT_DESTINATIONS:
-        raise ConfigurationError(
-            f"digicert.output.destination '{dest}' is invalid. "
-            f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."
-        )
-    if dest in ("vault", "both") and not digicert.get("output", {}).get("vault_path_template"):
+    output = digicert.get("output", {})
+    dest = output.get("destination", "filesystem")
+    # Validate destination: accept both legacy strings and list format
+    destinations = normalize_destinations(dest) if isinstance(dest, list) else None
+    if destinations is None:
+        # Legacy string validation
+        if dest not in _OUTPUT_DESTINATIONS:
+            raise ConfigurationError(
+                f"digicert.output.destination '{dest}' is invalid. "
+                f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."
+            )
+        destinations = normalize_destinations(dest)
+    if "vault" in destinations and not output.get("vault_path_template"):
         raise ConfigurationError(
             "digicert output destination includes 'vault' but no vault_path_template is set."
+        )
+    if "secrets_manager" in destinations and not output.get("sm_secret_name_template"):
+        raise ConfigurationError(
+            "digicert output destination includes 'secrets_manager' but no "
+            "sm_secret_name_template is set."
         )
 
 
@@ -409,9 +500,12 @@ def _validate_venafi(venafi: JsonDict) -> None:
     # venafi.base_url is only required when the venafi section has been
     # explicitly configured (auth_method overridden or output destination set).
     # This avoids failing validation for users who only use ACM or DigiCert.
+    output = venafi.get("output", {})
+    dest = output.get("destination", "filesystem")
     has_venafi_config = (
         venafi.get("auth_method") != "oauth"
-        or venafi.get("output", {}).get("destination", "filesystem") != "filesystem"
+        or (isinstance(dest, str) and dest != "filesystem")
+        or isinstance(dest, list)
     )
     if has_venafi_config and not venafi.get("base_url"):
         raise ConfigurationError("venafi.base_url is required. Set CM_VENAFI_BASE_URL.")
@@ -421,8 +515,9 @@ def _validate_venafi(venafi: JsonDict) -> None:
             f"venafi.auth_method '{auth_method}' is not supported. "
             f"Supported: {sorted(_VENAFI_AUTH_METHODS)}."
         )
-    dest: str = venafi.get("output", {}).get("destination", "")
-    if dest not in _OUTPUT_DESTINATIONS:
+    # Validate destination: accept both legacy strings and list format
+    destinations = normalize_destinations(dest) if isinstance(dest, list) else None
+    if destinations is None and dest not in _OUTPUT_DESTINATIONS:
         raise ConfigurationError(
             f"venafi.output.destination '{dest}' is invalid. "
             f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."

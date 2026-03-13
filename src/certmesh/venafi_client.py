@@ -628,12 +628,18 @@ def renew_and_download_certificate(
     def _inner() -> CertificateBundle:
         # ----- 1. Initiate renewal -----
         renew_url = f"{base}/vedsdk/certificates/renew"
+        renew_payload: JsonDict
         if _is_guid(certificate_guid):
-            renew_payload: JsonDict = {
+            renew_payload = {
                 "CertificateGUID": f"{{{certificate_guid}}}",
             }
         else:
-            renew_payload: JsonDict = {"CertificateDN": f"\\VED\\Policy\\{certificate_guid}"}
+            # Accept both short names (prefixed automatically) and full
+            # DN paths (starting with \VED\) to avoid double-prefixing.
+            dn = certificate_guid
+            if not dn.startswith("\\VED\\"):
+                dn = f"\\VED\\Policy\\{dn}"
+            renew_payload = {"CertificateDN": dn}
 
         resp = session.post(renew_url, json=renew_payload, timeout=timeout)
         _raise_for_status(resp, f"Renew certificate GUID='{certificate_guid}'")

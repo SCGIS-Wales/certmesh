@@ -82,6 +82,19 @@ class DigiCertAuthenticationError(DigiCertError):
 class DigiCertRateLimitError(DigiCertError):
     """Raised when the DigiCert API rate limit is exceeded (HTTP 429)."""
 
+    def __init__(self, message: str, retry_after: str = "") -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+    def retry_after_seconds(self) -> float | None:
+        """Parse the Retry-After header value into seconds, or None if absent/unparsable."""
+        if not self.retry_after:
+            return None
+        try:
+            return float(self.retry_after)
+        except ValueError:
+            return None
+
 
 class DigiCertAPIError(DigiCertError):
     """Raised for unexpected DigiCert API error responses."""
@@ -224,3 +237,20 @@ class PKCS12ParseError(CertificateError):
 
 class CertificateExportError(CertificateError):
     """Raised when writing certificate or key material to a destination fails."""
+
+
+# =============================================================================
+# AWS Secrets Manager
+# =============================================================================
+
+
+class SecretsManagerError(CertMeshError):
+    """Base exception for AWS Secrets Manager operations."""
+
+
+class SecretsManagerWriteError(SecretsManagerError):
+    """Raised when writing a secret to AWS Secrets Manager fails."""
+
+
+class SecretsManagerReadError(SecretsManagerError):
+    """Raised when reading a secret from AWS Secrets Manager fails."""

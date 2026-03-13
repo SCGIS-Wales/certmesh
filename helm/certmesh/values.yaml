@@ -1,0 +1,183 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/scgis-wales/certmesh
+  tag: ""  # defaults to chart appVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations:
+    eks.amazonaws.com/role-arn: ""  # IRSA role ARN
+  name: ""
+
+# --- OAuth2 Configuration ---
+oauth2:
+  enabled: true
+  issuerUrl: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXX"
+  audience: "certmesh-api"
+  jwksUri: ""  # auto-derived from issuerUrl if blank
+  requiredScopes: "certmesh:read"
+  adminScopes: "certmesh:admin"
+  writeScopes: "certmesh:write"
+
+# --- Provider Configuration ---
+digicert:
+  enabled: true
+  apiKeySource: "vault"
+  baseUrl: "https://www.digicert.com/services/v2"
+  output:
+    destination: "filesystem"
+    basePath: "/data/tls/digicert"
+    vaultPathTemplate: "secret/certmesh/tls/digicert/{order_id}"
+    smSecretNameTemplate: ""
+    smRegion: ""
+
+venafi:
+  enabled: false
+
+acm:
+  enabled: true
+  region: "us-east-1"
+  route53:
+    enabled: true
+    hostedZoneId: ""
+    autoSync: true
+
+# --- Vault Integration ---
+vault:
+  enabled: true
+  url: "https://vault.example.com"
+  authMethod: "aws_iam"
+  kvVersion: 2
+  awsIam:
+    role: "certmesh"
+    mountPoint: "aws"
+  tls:
+    verify: true
+
+# --- AWS Secrets Manager ---
+secretsManager:
+  enabled: false
+  region: "us-east-1"
+
+# --- API Server ---
+api:
+  workers: 4
+  timeout: 120
+  maxRequestSize: "1048576"  # 1MB
+  corsOrigins: ""
+  logLevel: "info"
+
+# --- Horizontal Pod Autoscaling ---
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilization: 70
+  targetMemoryUtilization: 80
+  requestRate:
+    enabled: false
+    targetRequestsPerSecond: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 120
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# --- Observability ---
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    namespace: ""
+  certExpiryMonitoring:
+    enabled: true
+    intervalMinutes: 60
+    warningDaysThreshold: 30
+    criticalDaysThreshold: 7
+
+# --- Networking ---
+service:
+  type: ClusterIP
+  port: 8000
+
+ingress:
+  enabled: false
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: "internal"
+    alb.ingress.kubernetes.io/target-type: "ip"
+    alb.ingress.kubernetes.io/certificate-arn: ""
+  hosts:
+    - host: certmesh.internal.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+networkPolicy:
+  enabled: true
+  # Allowed egress destinations
+  egressCIDRs:
+    - "0.0.0.0/0"  # Override with specific CIDRs in production
+
+# --- Persistence (for filesystem output) ---
+persistence:
+  enabled: false
+  storageClass: "gp3"
+  size: 1Gi
+  mountPath: "/data/tls"
+
+# --- Pod Configuration ---
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels: {}  # populated by _helpers.tpl
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault

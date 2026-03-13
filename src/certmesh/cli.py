@@ -1170,13 +1170,16 @@ def config_show(ctx: click.Context) -> None:
     import copy
 
     cfg = copy.deepcopy(ctx.obj["cfg"])
-    # Redact secret-related keys
+    # Redact secret-related keys across all Vault auth method subsections.
+    _sensitive_vault_keys = {"role", "mount_point"}
     for section in ("vault",):
-        for sub in ("approle", "ldap"):
+        for sub in ("approle", "ldap", "aws_iam"):
             if sub in cfg.get(section, {}):
                 for key in list(cfg[section][sub].keys()):
                     if "env" in key:
                         cfg[section][sub][key] = f"<from env: {cfg[section][sub][key]}>"
+                    elif key in _sensitive_vault_keys:
+                        cfg[section][sub][key] = "<redacted>"
     _json_output(cfg)
 
 

@@ -29,6 +29,7 @@ from certmesh.exceptions import (
     CSRGenerationError,
     KeyGenerationError,
     PKCS12ParseError,
+    SecretsManagerWriteError,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,17 +251,29 @@ def persist_bundle(
     output_cfg: JsonDict,
     vault_client: hvac.Client | None = None,
 ) -> dict[str, str]:
-    """Write certificate and private key material to configured destination(s)."""
-    destination: str = output_cfg.get("destination", "filesystem")
+    """Write certificate and private key material to configured destination(s).
+
+    Supports both legacy string destinations (``"filesystem"``, ``"vault"``,
+    ``"both"``) and the new-style list format
+    (``["filesystem", "vault", "secrets_manager"]``).
+    """
+    from certmesh.settings import normalize_destinations
+
+    raw_dest = output_cfg.get("destination", "filesystem")
+    destinations = normalize_destinations(raw_dest)
     written: dict[str, str] = {}
 
-    if destination in ("filesystem", "both"):
+    if "filesystem" in destinations:
         paths = _write_to_filesystem(bundle, output_cfg)
         written.update(paths)
 
-    if destination in ("vault", "both"):
+    if "vault" in destinations:
         vault_path = _write_to_vault(bundle, output_cfg, vault_client)
         written["vault"] = vault_path
+
+    if "secrets_manager" in destinations:
+        secret_name = _write_to_secrets_manager(bundle, output_cfg)
+        written["secrets_manager"] = secret_name
 
     return written
 
@@ -272,6 +285,7 @@ def _write_to_filesystem(
     """Write PEM files to the filesystem base_path."""
     sid = bundle.source_id
     base = Path(output_cfg["base_path"])
+    written_files: list[Path] = []
 
     try:
         base.mkdir(parents=True, exist_ok=True)
@@ -284,11 +298,13 @@ def _write_to_filesystem(
         )
 
         cert_path.write_text(bundle.certificate_pem, encoding="utf-8")
+        written_files.append(cert_path)
         logger.info("Wrote certificate PEM to '%s'.", cert_path)
 
         fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as kf:
             kf.write(bundle.private_key_pem)
+        written_files.append(key_path)
         logger.info("Wrote private key PEM to '%s' (mode 0600).", key_path)
 
         result = {
@@ -301,12 +317,21 @@ def _write_to_filesystem(
                 order_id=sid, guid=sid, cert_arn_short=sid
             )
             chain_path.write_text(bundle.chain_pem, encoding="utf-8")
+            written_files.append(chain_path)
             logger.info("Wrote CA chain PEM to '%s'.", chain_path)
             result["filesystem_chain"] = str(chain_path)
 
         return result
 
     except OSError as exc:
+        # Clean up any partially-written files to avoid leaving stale
+        # artefacts on disk (e.g. cert written but key write failed).
+        for partial in written_files:
+            try:
+                partial.unlink(missing_ok=True)
+                logger.warning("Cleaned up partial file '%s' after write failure.", partial)
+            except OSError:
+                pass  # best-effort cleanup
         raise CertificateExportError(
             f"Failed to write certificate material to filesystem path '{base}': {exc}"
         ) from exc
@@ -317,7 +342,7 @@ def _write_to_vault(
     output_cfg: JsonDict,
     vault_cl: hvac.Client | None,
 ) -> str:
-    """Write PEM material to a Vault KV v2 path."""
+    """Write PEM material to a Vault KV path (v1 or v2 based on config)."""
     from certmesh import vault_client as vc
 
     if vault_cl is None:
@@ -343,10 +368,69 @@ def _write_to_vault(
     if bundle.chain_pem:
         secret_data["chain_pem"] = bundle.chain_pem
 
-    vc.write_secret(vault_cl, vault_path, secret_data)
+    kv_version = int(output_cfg.get("kv_version", 2))
+    vc.write_secret_versioned(vault_cl, vault_path, secret_data, kv_version=kv_version)
     logger.info(
-        "Certificate material for '%s' stored in Vault at '%s'.",
+        "Certificate material for '%s' stored in Vault at '%s' (KV v%d).",
         bundle.common_name,
         vault_path,
+        kv_version,
     )
     return vault_path
+
+
+def _write_to_secrets_manager(
+    bundle: CertificateBundle,
+    output_cfg: JsonDict,
+) -> str:
+    """Write PEM material to AWS Secrets Manager."""
+    from certmesh import secrets_manager_client as smc
+
+    template: str = output_cfg.get("sm_secret_name_template", "")
+    if not template:
+        raise ConfigurationError(
+            "output destination includes 'secrets_manager' but no "
+            "sm_secret_name_template is configured."
+        )
+
+    region: str = output_cfg.get("sm_region", "")
+    if not region:
+        raise ConfigurationError(
+            "output destination includes 'secrets_manager' but no sm_region is configured."
+        )
+
+    secret_name = template.format(
+        order_id=bundle.source_id,
+        guid=bundle.source_id,
+        cert_arn_short=bundle.source_id,
+    )
+
+    secret_data: dict[str, str] = {
+        "certificate_pem": bundle.certificate_pem,
+        "private_key_pem": bundle.private_key_pem,
+        "certificate_pem_b64": bundle.certificate_pem_b64,
+        "serial_number": bundle.serial_number,
+        "common_name": bundle.common_name,
+        "not_after": bundle.not_after.isoformat(),
+        "source_id": bundle.source_id,
+    }
+    if bundle.chain_pem:
+        secret_data["chain_pem"] = bundle.chain_pem
+
+    try:
+        smc.write_secret(secret_name, secret_data, region)
+    except SecretsManagerWriteError:
+        raise
+    except Exception as exc:
+        raise SecretsManagerWriteError(
+            f"Failed to write certificate material for '{bundle.common_name}' "
+            f"to Secrets Manager secret '{secret_name}': {exc}"
+        ) from exc
+
+    logger.info(
+        "Certificate material for '%s' stored in Secrets Manager as '%s' (region=%s).",
+        bundle.common_name,
+        secret_name,
+        region,
+    )
+    return secret_name
