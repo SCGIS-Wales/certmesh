@@ -1349,6 +1349,516 @@ class TestExportAndPersist:
 
 
 # ============================================================================
+# Functional tests: ACM export of exportable public TLS certificates
+# ============================================================================
+#
+# These tests exercise the full export pathway end-to-end with real
+# cryptographic material.  ACM export is chargeable per renewal, so this
+# suite validates that every aspect of the flow works correctly before
+# a live call would be made.
+# ============================================================================
+
+
+class TestExportCertificateFunctional:
+    """End-to-end functional tests for ACM certificate export.
+
+    Each test builds real PEM material (cert + key + chain) and exercises
+    the full export_certificate -> assemble_bundle path to verify that
+    the returned CertificateBundle is correct and complete.
+    """
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_full_export_with_chain_produces_valid_bundle(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Export with cert + key + chain produces a complete, valid bundle."""
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+        # Use the cert itself as the chain (self-signed root)
+        chain_str = self_signed_cert_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": chain_str,
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"securepass")
+
+        # Verify the bundle is a real CertificateBundle with correct fields
+        assert bundle.common_name == "test.example.com"
+        assert bundle.certificate_pem == cert_str
+        assert bundle.private_key_pem == key_str
+        assert bundle.chain_pem == chain_str
+        assert bundle.serial_number  # non-empty hex serial
+        assert bundle.source_id == "abcd-1234"
+        assert bundle.not_after is not None
+
+        # Verify the API was called exactly once with correct parameters
+        mock_client.export_certificate.assert_called_once_with(
+            CertificateArn=_SAMPLE_CERT_ARN,
+            Passphrase=b"securepass",
+        )
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_full_export_without_chain_still_valid(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Export with empty chain (self-signed cert) still produces a valid bundle."""
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": "",
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"mypasswd")
+
+        assert bundle.common_name == "test.example.com"
+        assert bundle.certificate_pem == cert_str
+        assert bundle.private_key_pem == key_str
+        assert bundle.chain_pem is None
+        assert bundle.serial_number
+        assert bundle.source_id == "abcd-1234"
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_preserves_exact_pem_content(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Verify export preserves PEM content byte-for-byte (no truncation)."""
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": cert_str,
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"testpass")
+
+        # Verify PEM markers are intact
+        assert bundle.certificate_pem.startswith("-----BEGIN CERTIFICATE-----")
+        assert bundle.certificate_pem.strip().endswith("-----END CERTIFICATE-----")
+        assert bundle.private_key_pem.startswith("-----BEGIN RSA PRIVATE KEY-----")
+        assert bundle.private_key_pem.strip().endswith("-----END RSA PRIVATE KEY-----")
+
+        # Verify the certificate_pem_b64 is valid base64 of the cert
+        import base64
+
+        decoded = base64.b64decode(bundle.certificate_pem_b64)
+        assert decoded == self_signed_cert_pem
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_serial_number_matches_certificate(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Verify the serial number in the bundle matches the actual certificate."""
+        from cryptography import x509 as x509_mod
+
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": "",
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"testpass")
+
+        # Parse the certificate independently and verify the serial matches
+        parsed = x509_mod.load_pem_x509_certificate(self_signed_cert_pem)
+        expected_serial = format(parsed.serial_number, "x")
+        assert bundle.serial_number == expected_serial
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_not_after_matches_certificate(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Verify the not_after date matches the actual certificate expiry."""
+        from cryptography import x509 as x509_mod
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd1234")
+
+        parsed = x509_mod.load_pem_x509_certificate(self_signed_cert_pem)
+        assert bundle.not_after == parsed.not_valid_after_utc
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_source_id_derives_from_arn(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Verify source_id is correctly derived from the certificate ARN."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        # Use a realistic ARN format
+        arn = "arn:aws:acm:us-east-1:123456789012:certificate/unique-export-id-99"
+        bundle = export_certificate(acm_cfg, arn, b"testpass")
+
+        assert bundle.source_id == "unique-export-id-99"
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_passphrase_boundary_4_bytes(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+    ) -> None:
+        """Passphrase of exactly 4 bytes should be accepted (boundary)."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        bundle = export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"abcd")
+
+        assert bundle.common_name == "test.example.com"
+        mock_client.export_certificate.assert_called_once()
+
+    def test_export_passphrase_3_bytes_rejected(self, acm_cfg: JsonDict) -> None:
+        """Passphrase of exactly 3 bytes should be rejected."""
+        with pytest.raises(ACMExportError, match="at least 4 bytes"):
+            export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"abc")
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_request_not_exportable_raises(
+        self, mock_build: MagicMock, acm_cfg: JsonDict
+    ) -> None:
+        """Attempting to export a non-exportable cert raises ACMExportError."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.side_effect = _make_client_error(
+            code="RequestInProgressException",
+            message="Certificate is not exportable",
+        )
+
+        with pytest.raises(ACMExportError, match="RequestInProgressException"):
+            export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd")
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_invalid_arn_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
+        """Invalid ARN returns ValidationException from AWS."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.side_effect = _make_client_error(
+            code="ValidationException",
+            message="Invalid ARN format",
+        )
+
+        with pytest.raises(ACMExportError, match="ValidationException"):
+            export_certificate(acm_cfg, "invalid-arn", b"passwd")
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_access_denied_raises(self, mock_build: MagicMock, acm_cfg: JsonDict) -> None:
+        """IAM permission denied raises ACMExportError."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.side_effect = _make_client_error(
+            code="AccessDeniedException",
+            message="User not authorized to perform acm:ExportCertificate",
+        )
+
+        with pytest.raises(ACMExportError, match="AccessDeniedException"):
+            export_certificate(acm_cfg, _SAMPLE_CERT_ARN, b"passwd")
+
+
+class TestExportAndPersistFunctional:
+    """End-to-end functional tests for export + persist workflow.
+
+    These tests verify the complete flow from AWS API response to files
+    written on disk, ensuring no data is lost in the pipeline.
+    """
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_full_export_to_filesystem(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+        tmp_path,
+    ) -> None:
+        """Export and persist writes correct PEM files to disk."""
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": cert_str,
+        }
+
+        # Configure output to use tmp_path
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(tmp_path),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        result = export_and_persist(cfg, _SAMPLE_CERT_ARN, b"securepass")
+
+        # Verify files were written (persist_bundle uses filesystem_* keys)
+        assert "filesystem_cert" in result
+        assert "filesystem_key" in result
+
+        # Read back and verify content
+        import os
+
+        cert_path = result["filesystem_cert"]
+        key_path = result["filesystem_key"]
+        assert os.path.exists(cert_path)
+        assert os.path.exists(key_path)
+
+        with open(cert_path) as f:
+            written_cert = f.read()
+        assert written_cert == cert_str
+
+        with open(key_path) as f:
+            written_key = f.read()
+        assert written_key == key_str
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_persist_key_file_permissions(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+        tmp_path,
+    ) -> None:
+        """Verify the private key file is written with mode 0600."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(tmp_path),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        result = export_and_persist(cfg, _SAMPLE_CERT_ARN, b"securepass")
+
+        import os
+        import stat
+
+        key_path = result["filesystem_key"]
+        key_stat = os.stat(key_path)
+        mode = stat.S_IMODE(key_stat.st_mode)
+        assert mode == 0o600, f"Expected key file mode 0600, got {oct(mode)}"
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_persist_creates_output_directory(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+        tmp_path,
+    ) -> None:
+        """Persist creates the output directory if it doesn't exist."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        # Use a nested directory that doesn't exist yet
+        nested = tmp_path / "deep" / "nested" / "certs"
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(nested),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        result = export_and_persist(cfg, _SAMPLE_CERT_ARN, b"securepass")
+
+        assert nested.exists()
+        assert "filesystem_cert" in result
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_persist_idempotent(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+        tmp_path,
+    ) -> None:
+        """Running export_and_persist twice overwrites files cleanly."""
+        cert_str = self_signed_cert_pem.decode("utf-8")
+        key_str = private_key_pem.decode("utf-8")
+
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": cert_str,
+            "PrivateKey": key_str,
+            "CertificateChain": "",
+        }
+
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(tmp_path),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        result1 = export_and_persist(cfg, _SAMPLE_CERT_ARN, b"securepass")
+        result2 = export_and_persist(cfg, _SAMPLE_CERT_ARN, b"securepass")
+
+        # Same paths returned both times
+        assert result1["filesystem_cert"] == result2["filesystem_cert"]
+        assert result1["filesystem_key"] == result2["filesystem_key"]
+
+        # Content is still correct after second write
+        with open(result2["filesystem_cert"]) as f:
+            assert f.read() == cert_str
+
+    @patch("certmesh.acm_client._build_acm_client")
+    def test_export_different_arns_produce_different_files(
+        self,
+        mock_build: MagicMock,
+        acm_cfg: JsonDict,
+        self_signed_cert_pem: bytes,
+        private_key_pem: bytes,
+        tmp_path,
+    ) -> None:
+        """Different certificate ARNs produce different output files."""
+        mock_client = MagicMock()
+        mock_build.return_value = mock_client
+        mock_client.export_certificate.return_value = {
+            "Certificate": self_signed_cert_pem.decode("utf-8"),
+            "PrivateKey": private_key_pem.decode("utf-8"),
+            "CertificateChain": "",
+        }
+
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(tmp_path),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        arn1 = "arn:aws:acm:us-east-1:123456789012:certificate/cert-aaa"
+        arn2 = "arn:aws:acm:us-east-1:123456789012:certificate/cert-bbb"
+
+        result1 = export_and_persist(cfg, arn1, b"securepass")
+        result2 = export_and_persist(cfg, arn2, b"securepass")
+
+        # File paths should be different
+        assert result1["filesystem_cert"] != result2["filesystem_cert"]
+        assert result1["filesystem_key"] != result2["filesystem_key"]
+
+        # Both files should exist
+        import os
+
+        assert os.path.exists(result1["filesystem_cert"])
+        assert os.path.exists(result2["filesystem_cert"])
+
+    @patch("certmesh.acm_client.export_certificate")
+    def test_export_failure_does_not_leave_partial_files(
+        self,
+        mock_export: MagicMock,
+        acm_cfg: JsonDict,
+        tmp_path,
+    ) -> None:
+        """If export fails, no files should be written."""
+        mock_export.side_effect = ACMExportError("Export failed: cert not exportable")
+
+        cfg = dict(acm_cfg)
+        cfg["output"] = {
+            "destination": "filesystem",
+            "base_path": str(tmp_path),
+            "cert_filename": "{cert_arn_short}_cert.pem",
+            "key_filename": "{cert_arn_short}_key.pem",
+            "chain_filename": "{cert_arn_short}_chain.pem",
+        }
+
+        with pytest.raises(ACMExportError, match="Export failed"):
+            export_and_persist(cfg, _SAMPLE_CERT_ARN, b"password")
+
+        # No files should be written to the output directory
+        import os
+
+        files = os.listdir(tmp_path)
+        assert len(files) == 0, f"Unexpected files after failed export: {files}"
+
+
+# ============================================================================
 # Edge cases and data model tests
 # ============================================================================
 

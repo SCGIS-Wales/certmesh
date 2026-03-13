@@ -1,15 +1,18 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [main, "feature/**"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # ---------- Lint ----------
+
   lint:
     runs-on: ubuntu-latest
     strategy:
@@ -33,6 +36,8 @@ jobs:
         run: |
           ruff check src/ tests/
           ruff format --check src/ tests/
+
+  # ---------- Test ----------
 
   test:
     runs-on: ubuntu-latest
@@ -64,6 +69,8 @@ jobs:
           name: coverage-report
           path: coverage.xml
 
+  # ---------- Build ----------
+
   build:
     runs-on: ubuntu-latest
     needs: [lint, test]
@@ -76,13 +83,239 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build
+        run: pip install build twine
 
       - name: Build package
         run: python -m build
+
+      - name: Verify package metadata
+        run: twine check dist/*
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+
+  # ---------- Changelog script test ----------
+
+  changelog-script-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install pytest
+
+      - name: Run changelog script tests
+        run: pytest -v scripts/test_update_changelog.py
+
+  # ---------- Auto-tag on merge to main ----------
+
+  auto-tag:
+    name: Auto-tag release
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint, test, build, changelog-script-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      created: ${{ steps.create_tag.outputs.created }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            NEXT="3.0.0"
+          else
+            CURRENT="${LATEST_TAG#v}"
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            PATCH=$(echo "$CURRENT" | cut -d. -f3 | cut -d- -f1)
+            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${NEXT} (tag: v${NEXT})"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version and create tag
+        id: create_tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          # Update pyproject.toml version
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
+
+          # Update __init__.py version
+          sed -i "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" src/certmesh/__init__.py
+
+          # Commit the version bump
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml src/certmesh/__init__.py
+          if git diff --cached --quiet; then
+            echo "Version files already up to date"
+          else
+            git commit -m "chore: bump version to ${VERSION} [skip ci]"
+            git push origin main
+          fi
+
+          # Create and push tag
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "::notice::Created tag $TAG"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+  # ---------- GitHub Release ----------
+
+  github-release:
+    name: GitHub Release
+    if: needs.auto-tag.outputs.created == 'true'
+    needs: [auto-tag]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum * > checksums.txt
+
+      - name: Delete existing draft releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.auto-tag.outputs.tag }}"
+          gh api "repos/${{ github.repository }}/releases" --jq \
+            ".[] | select(.tag_name==\"${TAG}\" and .draft==true) | .id" \
+          | while read -r DRAFT_ID; do
+            echo "Deleting draft release (id=${DRAFT_ID})..."
+            gh api -X DELETE "repos/${{ github.repository }}/releases/${DRAFT_ID}"
+          done
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.auto-tag.outputs.tag }}"
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "Release ${TAG} already exists, updating..."
+            gh release edit "${TAG}" --latest
+            gh release upload "${TAG}" --clobber dist/*
+          else
+            echo "Creating new release ${TAG}..."
+            gh release create "${TAG}" \
+              --title "${TAG}" \
+              --generate-notes \
+              --latest \
+              dist/*
+          fi
+
+  # ---------- Publish to PyPI ----------
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: needs.auto-tag.outputs.created == 'true'
+    needs: [auto-tag, build]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout source (for sdist build with updated version)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.auto-tag.outputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build twine
+          python -m build
+
+      - name: Verify packages
+        run: twine check dist/*
+
+      - name: List packages to publish
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # ---------- Update CHANGELOG ----------
+
+  update-changelog:
+    name: Update CHANGELOG
+    if: needs.auto-tag.outputs.created == 'true'
+    needs: [auto-tag, github-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Update CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/update_changelog.py \
+            "${{ needs.auto-tag.outputs.version }}" \
+            "${{ github.repository }}"
+
+      - name: Commit and push CHANGELOG
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG changes to commit"
+          else
+            git commit -m "docs: update CHANGELOG for v${{ needs.auto-tag.outputs.version }} [skip ci]"
+            git push origin main
+          fi
