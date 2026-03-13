@@ -10,12 +10,12 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from certmesh.backends.secrets_manager_client import read_secret, write_secret
 from certmesh.exceptions import (
     ConfigurationError,
     SecretsManagerReadError,
     SecretsManagerWriteError,
 )
-from certmesh.secrets_manager_client import read_secret, write_secret
 from certmesh.settings import normalize_destinations
 
 JsonDict = dict[str, Any]
@@ -86,7 +86,7 @@ class TestWriteSecret:
             {"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
             "PutSecretValue",
         )
-        with patch("certmesh.secrets_manager_client.boto3") as mock_boto:
+        with patch("certmesh.backends.secrets_manager_client.boto3") as mock_boto:
             mock_boto.client.return_value = mock_client
             with pytest.raises(SecretsManagerWriteError, match="AccessDeniedException"):
                 write_secret("certmesh/test/denied", {"k": "v"}, TEST_REGION)
@@ -116,7 +116,7 @@ class TestReadSecret:
         mock_client.get_secret_value.return_value = {
             "SecretString": "not-json{{{",
         }
-        with patch("certmesh.secrets_manager_client.boto3") as mock_boto:
+        with patch("certmesh.backends.secrets_manager_client.boto3") as mock_boto:
             mock_boto.client.return_value = mock_client
             with pytest.raises(SecretsManagerReadError, match="invalid JSON"):
                 read_secret("certmesh/test/bad-json", TEST_REGION)
@@ -127,7 +127,7 @@ class TestReadSecret:
         mock_client.get_secret_value.return_value = {
             "SecretString": "",
         }
-        with patch("certmesh.secrets_manager_client.boto3") as mock_boto:
+        with patch("certmesh.backends.secrets_manager_client.boto3") as mock_boto:
             mock_boto.client.return_value = mock_client
             with pytest.raises(SecretsManagerReadError, match="no string value"):
                 read_secret("certmesh/test/binary", TEST_REGION)
@@ -140,7 +140,7 @@ class TestReadSecret:
             {"Error": {"Code": "AccessDeniedException", "Message": "denied"}},
             "GetSecretValue",
         )
-        with patch("certmesh.secrets_manager_client.boto3") as mock_boto:
+        with patch("certmesh.backends.secrets_manager_client.boto3") as mock_boto:
             mock_boto.client.return_value = mock_client
             with pytest.raises(SecretsManagerReadError, match="AccessDeniedException"):
                 read_secret("certmesh/test/denied", TEST_REGION)

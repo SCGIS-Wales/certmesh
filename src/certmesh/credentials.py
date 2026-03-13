@@ -80,7 +80,7 @@ def resolve_digicert_api_key(
     vault_cl: hvac.Client | None,
 ) -> str:
     """Resolve the DigiCert CertCentral API key."""
-    from certmesh import vault_client as _vc
+    from certmesh.backends import vault_client as _vc
 
     api_key = os.environ.get(_ENV_DIGICERT_API_KEY)
     if api_key:
@@ -105,7 +105,7 @@ def resolve_venafi_credentials(
     vault_cl: hvac.Client | None,
 ) -> dict[str, str]:
     """Resolve Venafi TPP Active Directory credentials."""
-    from certmesh import vault_client as _vc
+    from certmesh.backends import vault_client as _vc
 
     username = os.environ.get(_ENV_VENAFI_USERNAME)
     password = os.environ.get(_ENV_VENAFI_PASSWORD)

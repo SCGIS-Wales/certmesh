@@ -9,12 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from hvac.exceptions import Forbidden, InvalidPath, Unauthorized
 
-from certmesh.exceptions import (
-    ConfigurationError,
-    VaultAuthenticationError,
-    VaultSecretNotFoundError,
-)
-from certmesh.vault_client import (
+from certmesh.backends.vault_client import (
     _split_path,
     get_authenticated_client,
     issue_pki_certificate,
@@ -25,6 +20,11 @@ from certmesh.vault_client import (
     revoke_pki_certificate,
     sign_pki_certificate,
     write_secret,
+)
+from certmesh.exceptions import (
+    ConfigurationError,
+    VaultAuthenticationError,
+    VaultSecretNotFoundError,
 )
 
 JsonDict = dict[str, Any]
@@ -66,13 +66,13 @@ class TestGetAuthenticatedClient:
 
     def test_approle_missing_role_id(self, vault_cfg: JsonDict) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            with patch("certmesh.vault_client._build_client"):
+            with patch("certmesh.backends.vault_client._build_client"):
                 with pytest.raises(ConfigurationError, match="role_id"):
                     get_authenticated_client(vault_cfg)
 
     def test_approle_missing_secret_id(self, vault_cfg: JsonDict) -> None:
         with patch.dict(os.environ, {"CM_VAULT_ROLE_ID": "role"}, clear=True):
-            with patch("certmesh.vault_client._build_client"):
+            with patch("certmesh.backends.vault_client._build_client"):
                 with pytest.raises(ConfigurationError, match="secret_id"):
                     get_authenticated_client(vault_cfg)
 
@@ -84,7 +84,7 @@ class TestGetAuthenticatedClient:
                 os.environ,
                 {"CM_VAULT_ROLE_ID": "role", "CM_VAULT_SECRET_ID": "secret"},
             ),
-            patch("certmesh.vault_client._build_client", return_value=mock_client),
+            patch("certmesh.backends.vault_client._build_client", return_value=mock_client),
         ):
             client = get_authenticated_client(vault_cfg)
         assert client is mock_client
@@ -98,7 +98,7 @@ class TestGetAuthenticatedClient:
                 os.environ,
                 {"CM_VAULT_ROLE_ID": "role", "CM_VAULT_SECRET_ID": "secret"},
             ),
-            patch("certmesh.vault_client._build_client", return_value=mock_client),
+            patch("certmesh.backends.vault_client._build_client", return_value=mock_client),
             pytest.raises(VaultAuthenticationError),
         ):
             get_authenticated_client(vault_cfg)
@@ -112,7 +112,7 @@ class TestGetAuthenticatedClient:
                 os.environ,
                 {"CM_VAULT_LDAP_USERNAME": "user", "CM_VAULT_LDAP_PASSWORD": "pass"},
             ),
-            patch("certmesh.vault_client._build_client", return_value=mock_client),
+            patch("certmesh.backends.vault_client._build_client", return_value=mock_client),
         ):
             client = get_authenticated_client(vault_cfg)
         assert client is mock_client
@@ -125,7 +125,7 @@ class TestGetAuthenticatedClient:
                 os.environ,
                 {"CM_VAULT_ROLE_ID": "role", "CM_VAULT_SECRET_ID": "secret"},
             ),
-            patch("certmesh.vault_client._build_client", return_value=mock_client),
+            patch("certmesh.backends.vault_client._build_client", return_value=mock_client),
             pytest.raises(VaultAuthenticationError, match="is_authenticated"),
         ):
             get_authenticated_client(vault_cfg)

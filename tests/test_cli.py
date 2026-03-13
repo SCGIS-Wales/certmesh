@@ -274,7 +274,7 @@ class TestVaultPKIIssue:
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
         mock_vc_mod.issue_pki_certificate.return_value = mock_result
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(["vault-pki", "issue", "--cn", "svc.example.com"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -290,7 +290,7 @@ class TestVaultPKIIssue:
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
         mock_vc_mod.issue_pki_certificate.return_value = mock_result
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(
                 [
                     "vault-pki",
@@ -323,7 +323,7 @@ class TestVaultPKISign:
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
         mock_vc_mod.sign_pki_certificate.return_value = mock_result
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(
                 [
                     "vault-pki",
@@ -344,7 +344,7 @@ class TestVaultPKIList:
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
         mock_vc_mod.list_pki_certificates.return_value = ["aa:bb", "cc:dd"]
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(["vault-pki", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -357,7 +357,7 @@ class TestVaultPKIRead:
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
         mock_vc_mod.read_pki_certificate.return_value = {"certificate": "---PEM---"}
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(["vault-pki", "read", "--serial", "aa:bb:cc"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -368,7 +368,7 @@ class TestVaultPKIRevoke:
     def test_revoke_success(self, clif: _CliFixture):
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.return_value = MagicMock()
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke(["vault-pki", "revoke", "--serial", "aa:bb:cc"])
         assert result.exit_code == 0
         assert "aa:bb:cc" in result.output
@@ -384,7 +384,7 @@ class TestACMRequest:
     def test_request_success(self, clif: _CliFixture):
         mock_acm = MagicMock()
         mock_acm.request_certificate.return_value = "arn:aws:acm:us-east-1:123:cert/abc"
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm",
@@ -401,7 +401,7 @@ class TestACMRequest:
     def test_request_with_san_and_region(self, clif: _CliFixture):
         mock_acm = MagicMock()
         mock_acm.request_certificate.return_value = "arn:aws:acm:eu-west-1:123:cert/xyz"
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm",
@@ -431,7 +431,7 @@ class TestACMList:
         )
         mock_acm = MagicMock()
         mock_acm.list_certificates.return_value = [item]
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(["acm", "list"])
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -448,7 +448,7 @@ class TestACMDescribe:
         )
         mock_acm = MagicMock()
         mock_acm.describe_certificate.return_value = detail
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm",
@@ -473,7 +473,7 @@ class TestACMExport:
         )
         mock_acm = MagicMock()
         mock_acm.export_certificate.return_value = bundle
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm",
@@ -494,7 +494,7 @@ class TestACMExport:
 class TestACMDelete:
     def test_delete_success(self, clif: _CliFixture):
         mock_acm = MagicMock()
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm",
@@ -524,7 +524,7 @@ class TestACMPCAIssue:
         mock_acm.issue_private_certificate.return_value = (
             "arn:aws:acm-pca:us-east-1:123:certificate-authority/abc/certificate/xyz"
         )
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm-pca",
@@ -549,7 +549,7 @@ class TestACMPCAGet:
             "---PEM---",
             "---CHAIN---",
         )
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm-pca",
@@ -569,7 +569,7 @@ class TestACMPCAGet:
 class TestACMPCARevoke:
     def test_revoke_success(self, clif: _CliFixture):
         mock_acm = MagicMock()
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm-pca",
@@ -600,7 +600,7 @@ class TestACMPCAList:
         mock_acm.list_private_certificates.return_value = [
             {"CertificateArn": _CERT_ARN, "Status": "ISSUED"},
         ]
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke(
                 [
                     "acm-pca",
@@ -627,7 +627,7 @@ class TestDigicertList:
         mock_dc = MagicMock()
         mock_dc.list_issued_certificates.return_value = [item]
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["digicert", "list"])
@@ -639,7 +639,7 @@ class TestDigicertList:
         mock_dc = MagicMock()
         mock_dc.list_issued_certificates.return_value = []
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -664,7 +664,7 @@ class TestDigicertSearch:
         mock_dc = MagicMock()
         mock_dc.search_certificates.return_value = [item]
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["digicert", "search", "--cn", "api.example.com"])
@@ -676,7 +676,7 @@ class TestDigicertSearch:
         mock_dc = MagicMock()
         mock_dc.search_certificates.return_value = []
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -711,7 +711,7 @@ class TestDigicertDescribe:
         mock_dc = MagicMock()
         mock_dc.describe_certificate.return_value = detail
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["digicert", "describe", "--cert-id", "333"])
@@ -731,7 +731,7 @@ class TestDigicertOrder:
         mock_dc.OrderRequest = MagicMock()
         mock_dc.order_and_await_certificate.return_value = bundle
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -757,7 +757,7 @@ class TestDigicertDownload:
         mock_dc = MagicMock()
         mock_dc.download_issued_certificate.return_value = bundle
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -781,7 +781,7 @@ class TestDigicertRevoke:
     def test_revoke_success(self, clif: _CliFixture):
         mock_dc = MagicMock()
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -813,7 +813,7 @@ class TestDigicertDuplicate:
         mock_dc = MagicMock()
         mock_dc.duplicate_certificate.return_value = {"order_id": 777, "status": "pending"}
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -851,7 +851,7 @@ class TestVenafiList:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.list_certificates.return_value = [item]
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["venafi", "list"])
@@ -868,7 +868,7 @@ class TestVenafiSearch:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.search_certificates.return_value = [item]
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["venafi", "search", "--cn", "api.corp.com"])
@@ -891,7 +891,7 @@ class TestVenafiDescribe:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.describe_certificate.return_value = detail
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["venafi", "describe", "--guid", "{ccc}"])
@@ -909,7 +909,7 @@ class TestVenafiRequest:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.request_certificate.return_value = bundle
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -942,7 +942,7 @@ class TestVenafiRenew:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.renew_and_download_certificate.return_value = bundle
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["venafi", "renew", "--guid", "{eee}"])
@@ -958,7 +958,7 @@ class TestVenafiRevoke:
         mock_vn = MagicMock()
         mock_vn.authenticate.return_value = MagicMock()  # session
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -983,7 +983,7 @@ class TestVenafiRevoke:
         mock_vn = MagicMock()
         mock_vn.authenticate.return_value = MagicMock()  # session
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(
@@ -1002,7 +1002,7 @@ class TestVenafiRevoke:
         mock_vn = MagicMock()
         mock_vn.authenticate.return_value = MagicMock()  # session
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke_catch(["venafi", "revoke"])
@@ -1017,7 +1017,7 @@ class TestVenafiDownload:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.renew_and_download_certificate.return_value = bundle
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke(["venafi", "download", "--guid", "{fff}"])
@@ -1040,7 +1040,7 @@ class TestCommandErrorHandling:
         mock_dc = MagicMock()
         mock_dc.list_issued_certificates.side_effect = DigiCertError("api 500")
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke_catch(["digicert", "list"])
@@ -1052,7 +1052,7 @@ class TestCommandErrorHandling:
         mock_vn.authenticate.return_value = MagicMock()  # session
         mock_vn.list_certificates.side_effect = VenafiError("tpp down")
         with (
-            patch("certmesh.venafi_client", mock_vn, create=True),
+            patch("certmesh.providers.venafi_client", mock_vn, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke_catch(["venafi", "list"])
@@ -1062,7 +1062,7 @@ class TestCommandErrorHandling:
     def test_acm_list_acm_error(self, clif: _CliFixture):
         mock_acm = MagicMock()
         mock_acm.list_certificates.side_effect = ACMError("aws fail")
-        with patch("certmesh.acm_client", mock_acm, create=True):
+        with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke_catch(["acm", "list"])
         assert result.exit_code == 2
         assert "aws fail" in result.stderr
@@ -1070,7 +1070,7 @@ class TestCommandErrorHandling:
     def test_vault_pki_list_vault_error(self, clif: _CliFixture):
         mock_vc_mod = MagicMock()
         mock_vc_mod.get_authenticated_client.side_effect = VaultError("sealed")
-        with patch("certmesh.vault_client", mock_vc_mod, create=True):
+        with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke_catch(["vault-pki", "list"])
         assert result.exit_code == 1
         assert "sealed" in result.stderr
@@ -1079,7 +1079,7 @@ class TestCommandErrorHandling:
         mock_dc = MagicMock()
         mock_dc.list_issued_certificates.side_effect = RuntimeError("oops")
         with (
-            patch("certmesh.digicert_client", mock_dc, create=True),
+            patch("certmesh.providers.digicert_client", mock_dc, create=True),
             patch("certmesh.cli._get_vault_client", return_value=None),
         ):
             result = clif.invoke_catch(["digicert", "list"])

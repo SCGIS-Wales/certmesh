@@ -9,18 +9,46 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Organisational prefix for all resource names.
+# Set to "" (default) for no prefix.
+# Example: "acme-" would produce resources like "acme-certmesh"
+resourcePrefix: ""
+
 serviceAccount:
   create: true
   annotations:
     eks.amazonaws.com/role-arn: ""  # IRSA role ARN
+    # Required IAM permissions for the IRSA role (combine as needed):
+    #   ACM:              acm:RequestCertificate, acm:DescribeCertificate, acm:ListCertificates,
+    #                     acm:DeleteCertificate, acm:RenewCertificate, acm:ExportCertificate,
+    #                     acm:GetCertificate, acm:ListTagsForCertificate, acm:AddTagsToCertificate
+    #   ACM-PCA:          acm-pca:IssueCertificate, acm-pca:GetCertificate, acm-pca:RevokeCertificate,
+    #                     acm-pca:ListCertificateAuthorities, acm-pca:DescribeCertificateAuthority,
+    #                     acm-pca:GetCertificateAuthorityCertificate
+    #   Route53:          route53:ChangeResourceRecordSets, route53:ListHostedZones,
+    #                     route53:GetHostedZone, route53:ListResourceRecordSets
+    #   Secrets Manager:  secretsmanager:CreateSecret, secretsmanager:PutSecretValue,
+    #                     secretsmanager:GetSecretValue, secretsmanager:DescribeSecret,
+    #                     secretsmanager:UpdateSecret, secretsmanager:TagResource
+    #   Vault IAM Auth:   sts:AssumeRole, sts:GetCallerIdentity
   name: ""
 
 # --- OAuth2 Configuration ---
 oauth2:
   enabled: true
-  issuerUrl: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXX"
-  audience: "certmesh-api"
+  # Azure Entra ID example:
+  #   issuerUrl: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+  #   audience: "<application-client-id>"
+  # ADFS example:
+  #   issuerUrl: "https://adfs.corp.example.com/adfs"
+  #   jwksUri: "https://adfs.corp.example.com/adfs/discovery/keys"
+  #   audience: "<relying-party-identifier>"
+  # AWS Cognito example:
+  #   issuerUrl: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXX"
+  issuerUrl: ""
+  audience: ""
   jwksUri: ""  # auto-derived from issuerUrl if blank
+  providerHint: "generic"  # "generic" | "adfs" | "entra_id"
   requiredScopes: "certmesh:read"
   adminScopes: "certmesh:admin"
   writeScopes: "certmesh:write"
@@ -39,6 +67,15 @@ digicert:
 
 venafi:
   enabled: false
+  # Venafi TPP is hosted on-premise; set the base URL of your TPP instance
+  baseUrl: ""  # e.g. "https://tpp.corp.example.com"
+  authMethod: "oauth"  # "oauth" or "ldap"
+  oauthClientId: "certapi"
+  oauthScope: "certificate:manage"
+  tlsVerify: true
+  output:
+    destination: "filesystem"
+    basePath: "/data/tls/venafi"
 
 acm:
   enabled: true
@@ -48,12 +85,29 @@ acm:
     hostedZoneId: ""
     autoSync: true
 
+# --- Let's Encrypt Configuration ---
+letsencrypt:
+  enabled: false  # disabled by default
+  directoryUrl: "https://acme-v02.api.letsencrypt.org/directory"
+  email: ""
+  challengeType: "dns-01"  # "http-01" or "dns-01"
+  agreeTos: false
+
 # --- Vault Integration ---
 vault:
   enabled: true
   url: "https://vault.example.com"
-  authMethod: "aws_iam"
+  authMethod: "approle"  # "approle" | "ldap" | "aws_iam"
   kvVersion: 2
+  approle:
+    # Name of K8s Secret containing role_id and secret_id
+    existingSecret: ""  # e.g. "vault-approle-creds"
+    roleIdKey: "role_id"
+    secretIdKey: "secret_id"
+  ldap:
+    existingSecret: ""
+    usernameKey: "username"
+    passwordKey: "password"
   awsIam:
     role: "certmesh"
     mountPoint: "aws"
@@ -129,11 +183,16 @@ service:
 
 ingress:
   enabled: false
-  className: "alb"
+  className: ""
   annotations:
-    alb.ingress.kubernetes.io/scheme: "internal"
-    alb.ingress.kubernetes.io/target-type: "ip"
-    alb.ingress.kubernetes.io/certificate-arn: ""
+    # NLB (default for AWS):
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    # For ALB instead, uncomment:
+    # alb.ingress.kubernetes.io/scheme: "internal"
+    # alb.ingress.kubernetes.io/target-type: "ip"
+    # alb.ingress.kubernetes.io/certificate-arn: ""
   hosts:
     - host: certmesh.internal.example.com
       paths:
@@ -146,6 +205,24 @@ networkPolicy:
   # Allowed egress destinations
   egressCIDRs:
     - "0.0.0.0/0"  # Override with specific CIDRs in production
+
+# --- Vault PKI TLS Auto-Issuance ---
+vaultPkiTls:
+  enabled: false
+  # "leaf" = server certificate; "intermediate" = intermediate CA (no signing)
+  certType: "leaf"
+  mountPoint: "pki"
+  roleName: "certmesh-server"
+  commonName: "certmesh.internal.example.com"
+  sans: []
+  ttl: "720h"  # 30 days
+  # Mount paths inside the container
+  certPath: "/etc/tls/tls.crt"
+  keyPath: "/etc/tls/tls.key"
+  caPath: "/etc/tls/ca.crt"
+  # For intermediate CA without signing capability
+  issueIntermediate: false
+  intermediateMountPoint: "pki_int"
 
 # --- Persistence (for filesystem output) ---
 persistence:

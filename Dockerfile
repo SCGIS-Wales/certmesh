@@ -1,10 +1,10 @@
 # =============================================================================
 # Stage 1: Build wheel
 # =============================================================================
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
-COPY pyproject.toml .
+COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 
 RUN pip install --no-cache-dir build \
@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir build \
 # =============================================================================
 # Stage 2: Production runtime (hardened)
 # =============================================================================
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # Create non-root user
 RUN groupadd -r certmesh \

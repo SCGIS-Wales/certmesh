@@ -1,3 +1,8 @@
+[![PyPI version](https://img.shields.io/pypi/v/certmesh)](https://pypi.org/project/certmesh/)
+[![Python](https://img.shields.io/pypi/pyversions/certmesh)](https://pypi.org/project/certmesh/)
+[![CI](https://github.com/SCGIS-Wales/certmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/SCGIS-Wales/certmesh/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 # certmesh
 
 Automated TLS certificate lifecycle management for Python 3.10+.
@@ -6,11 +11,13 @@ A unified CLI and Python API for managing certificates across **DigiCert CertCen
 
 ## Features
 
-- **Multi-provider** -- single tool for DigiCert, Venafi TPP, Vault PKI, and AWS ACM/ACM-PCA
+- **Multi-provider** -- single tool for DigiCert, Venafi TPP, Vault PKI, AWS ACM/ACM-PCA, and Let's Encrypt
 - **Full lifecycle** -- request, list, search, describe, download, renew, revoke, and export certificates
-- **Credential security** -- secrets come from Vault or environment variables, never from config files
+- **REST API** -- production-grade FastAPI service with OAuth2 (ADFS / Azure Entra ID), Prometheus metrics
+- **Credential security** -- secrets come from Vault (KV v1/v2) or environment variables, never from config files
 - **Resilient** -- circuit breakers, exponential-backoff retry, and configurable timeouts on all HTTP calls
 - **Configurable** -- layered config: built-in defaults < YAML file < `CM_*` environment variables
+- **Cloud-native** -- Docker image, Helm chart for EKS with IRSA, NLB, HPA, and Vault PKI TLS
 - **Typed** -- fully typed with `py.typed` marker; dataclass models for all API responses
 
 ## Installation
@@ -74,6 +81,7 @@ See [`config/config.yaml`](config/config.yaml) for the full annotated reference 
 | **DigiCert** | API key from `CM_DIGICERT_API_KEY` or Vault KV |
 | **Venafi** | OAuth2 or LDAP; credentials from `CM_VENAFI_USERNAME`/`CM_VENAFI_PASSWORD` or Vault KV |
 | **AWS ACM** | Standard boto3 credential chain (IAM role, env vars, `~/.aws/credentials`) |
+| **Let's Encrypt** | ACME account key (auto-generated or provided) |
 
 Credentials are resolved env-first, Vault-fallback. Vault is only contacted when needed.
 
@@ -152,13 +160,23 @@ certmesh/
   cli.py               -- Click CLI (entry point: certmesh.cli:cli)
   settings.py           -- Layered config: defaults -> YAML -> env vars
   credentials.py        -- Env-first, Vault-fallback secret resolution
-  vault_client.py       -- Vault auth + KV v2 + PKI engine
-  digicert_client.py    -- DigiCert CertCentral API v2
-  venafi_client.py      -- Venafi TPP API (OAuth2 + LDAP)
-  acm_client.py         -- AWS ACM + ACM-PCA (boto3)
   certificate_utils.py  -- Key gen, CSR, PKCS#12, bundle assembly, persistence
   circuit_breaker.py    -- Thread-safe CLOSED/OPEN/HALF_OPEN state machine
   exceptions.py         -- Full exception hierarchy
+  providers/
+    digicert_client.py  -- DigiCert CertCentral API v2
+    venafi_client.py    -- Venafi TPP API (OAuth2 + LDAP)
+    acm_client.py       -- AWS ACM + ACM-PCA (boto3)
+    letsencrypt_client.py -- Let's Encrypt / ACME (RFC 8555)
+  backends/
+    vault_client.py     -- Vault auth + KV v1/v2 + PKI engine
+    secrets_manager_client.py -- AWS Secrets Manager
+    route53_client.py   -- Route53 DNS record management
+  api/
+    app.py              -- FastAPI application factory
+    auth.py             -- OAuth2 JWT Bearer validation
+    routes/             -- REST API endpoints
+    metrics.py          -- Prometheus metrics
 ```
 
 ### Certificate Output
@@ -166,10 +184,11 @@ certmesh/
 Issued certificates can be persisted to:
 
 - **Filesystem** -- PEM files with private keys written mode `0600`
-- **Vault KV v2** -- certificate material stored as a versioned secret
-- **Both** -- simultaneous filesystem + Vault storage
+- **Vault KV v1/v2** -- certificate material stored as a KV secret (versioned or unversioned)
+- **AWS Secrets Manager** -- certificate bundle stored as a JSON secret
+- **Multiple destinations** -- any combination of the above
 
-Configured per-provider via `output.destination` (`filesystem`, `vault`, or `both`).
+Configured per-provider via `output.destination` (list or legacy string: `filesystem`, `vault`, `secrets_manager`, or `both`).
 
 ## Development
 
@@ -188,9 +207,118 @@ ruff check src/ tests/
 ruff format src/ tests/
 ```
 
+## Docker
+
+```bash
+docker build -t certmesh .
+docker run --rm certmesh --help
+
+# Run the REST API
+docker run -p 8000:8000 -e CM_CONFIG_FILE=/app/config.yaml certmesh
+```
+
+## Helm Chart
+
+```bash
+helm install certmesh helm/certmesh \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/certmesh
+```
+
+See [`helm/certmesh/values.yaml`](helm/certmesh/values.yaml) for all configuration options.
+
+### AWS IAM Permissions
+
+When running on AWS (EKS with IRSA, EC2, or Lambda), the IAM role needs the following permissions depending on which features are enabled:
+
+**AWS Certificate Manager (ACM)**
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "acm:RequestCertificate",
+    "acm:DescribeCertificate",
+    "acm:ListCertificates",
+    "acm:DeleteCertificate",
+    "acm:RenewCertificate",
+    "acm:ExportCertificate",
+    "acm:GetCertificate",
+    "acm:ListTagsForCertificate",
+    "acm:AddTagsToCertificate"
+  ],
+  "Resource": "*"
+}
+```
+
+**AWS ACM Private CA (ACM-PCA)**
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "acm-pca:IssueCertificate",
+    "acm-pca:GetCertificate",
+    "acm-pca:RevokeCertificate",
+    "acm-pca:ListCertificateAuthorities",
+    "acm-pca:DescribeCertificateAuthority",
+    "acm-pca:GetCertificateAuthorityCertificate"
+  ],
+  "Resource": "*"
+}
+```
+
+**Route53 (ACM DNS Validation)**
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "route53:ChangeResourceRecordSets",
+    "route53:ListHostedZones",
+    "route53:GetHostedZone",
+    "route53:ListResourceRecordSets"
+  ],
+  "Resource": [
+    "arn:aws:route53:::hostedzone/*"
+  ]
+}
+```
+
+**AWS Secrets Manager (Certificate Storage)**
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "secretsmanager:CreateSecret",
+    "secretsmanager:PutSecretValue",
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:DescribeSecret",
+    "secretsmanager:UpdateSecret",
+    "secretsmanager:TagResource"
+  ],
+  "Resource": "arn:aws:secretsmanager:*:*:secret:certmesh/*"
+}
+```
+
+**Vault AWS IAM Auth (STS)**
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "sts:AssumeRole",
+    "sts:GetCallerIdentity"
+  ],
+  "Resource": "*"
+}
+```
+
+> **Tip:** For EKS deployments with IRSA, create a single IAM role with only the permissions you need, then reference it in your Helm values: `serviceAccount.annotations."eks.amazonaws.com/role-arn"`.
+
 ### Test Suite
 
-- **398 tests** across 10 test modules
+- **538+ tests** across the test suite
 - **87%+ coverage** (80% minimum enforced in CI)
 - Tests use `pytest`, `pytest-mock`, `responses`, `moto`, and `freezegun`
 
@@ -202,7 +330,10 @@ GitHub Actions runs on every push and PR:
 |-----|--------|-------------|
 | **lint** | Python 3.10 - 3.14 | `ruff check` + `ruff format --check` |
 | **test** | Python 3.10 - 3.14 | `pytest` with coverage |
-| **build** | Python 3.12 | `python -m build` |
+| **build** | Python 3.14 | `python -m build` + `twine check` |
+| **docker-build** | - | Docker image build + smoke test |
+| **auto-tag** | - | Auto-version bump and tag on merge to main |
+| **publish-pypi** | - | Publish to PyPI via trusted publisher |
 
 ## License
 

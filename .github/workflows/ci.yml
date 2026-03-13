@@ -80,7 +80,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install build tools
         run: pip install build twine
@@ -96,6 +96,21 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  # ---------- Docker Build ----------
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        run: docker build -t certmesh:ci-test .
+      - name: Smoke test container
+        run: |
+          docker run --rm certmesh:ci-test python3 -c "import certmesh; print(certmesh.__version__)"
 
   # ---------- Changelog script test ----------
 
@@ -251,6 +266,9 @@ jobs:
     needs: [auto-tag, build]
     runs-on: ubuntu-latest
     continue-on-error: true
+    environment:
+      name: pypi
+      url: https://pypi.org/project/certmesh/
     permissions:
       id-token: write
     steps:
@@ -261,7 +279,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Build sdist and wheel
         run: |

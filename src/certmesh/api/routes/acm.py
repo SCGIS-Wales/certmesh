@@ -36,7 +36,7 @@ async def list_certificates(
     claims: Any = Depends(_get_auth),
 ) -> PaginatedResponse:
     """List ACM certificates."""
-    from certmesh import acm_client
+    from certmesh.providers import acm_client
 
     cfg = request.app.state.config["acm"]
     certs = acm_client.list_certificates(cfg)
@@ -51,7 +51,7 @@ async def request_certificate(
     claims: Any = Depends(_get_auth),
 ) -> ACMCertificateResponse:
     """Request a new ACM certificate."""
-    from certmesh import acm_client
+    from certmesh.providers import acm_client
 
     cfg = request.app.state.config["acm"]
     result = acm_client.request_certificate(
@@ -77,7 +77,7 @@ async def get_validation_records(
     claims: Any = Depends(_get_auth),
 ) -> list[ACMValidationRecord]:
     """Get DNS validation records for an ACM certificate."""
-    from certmesh import acm_client
+    from certmesh.providers import acm_client
 
     cfg = request.app.state.config["acm"]
     records = acm_client.get_validation_records(cfg, cert_arn)
@@ -98,7 +98,7 @@ async def export_certificate(
     claims: Any = Depends(_get_auth),
 ) -> ACMExportResponse:
     """Export a certificate from ACM."""
-    from certmesh import acm_client
+    from certmesh.providers import acm_client
 
     cfg = request.app.state.config["acm"]
     vault_cl = getattr(request.app.state, "vault_client", None)
@@ -117,7 +117,7 @@ async def sync_route53_records(
     claims: Any = Depends(_get_auth),
 ) -> ACMRoute53SyncResponse:
     """Create Route53 DNS records for ACM certificate validation."""
-    from certmesh import route53_client
+    from certmesh.backends import route53_client
 
     records = route53_client.sync_validation_records(
         hosted_zone_id=body.hosted_zone_id,

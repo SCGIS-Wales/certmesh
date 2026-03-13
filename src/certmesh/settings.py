@@ -180,6 +180,7 @@ _DEFAULTS: JsonDict = {
         "level": "INFO",
         "format": ("%(asctime)s [%(levelname)s] %(name)s - %(funcName)s:%(lineno)d - %(message)s"),
         "datefmt": "%Y-%m-%dT%H:%M:%S",
+        "log_format": "json",
     },
 }
 
@@ -410,7 +411,7 @@ def _env_overrides() -> JsonDict:
 
     # Logging
     _sset(overrides, ["logging", "level"], e("CM_LOG_LEVEL"))
-    _sset(overrides, ["logging", "format"], e("CM_LOG_FORMAT"))
+    _sset(overrides, ["logging", "log_format"], e("CM_LOG_FORMAT"))
 
     return overrides
 

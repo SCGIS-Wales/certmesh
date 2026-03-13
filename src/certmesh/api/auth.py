@@ -32,12 +32,21 @@ class OAuth2Config:
     required_scopes: list[str] = field(default_factory=list)
     admin_scopes: list[str] = field(default_factory=list)
     write_scopes: list[str] = field(default_factory=list)
+    provider_hint: str = "generic"  # "generic", "adfs", "entra_id"
 
     def effective_jwks_uri(self) -> str:
         """Derive JWKS URI from issuer if not explicitly set."""
         if self.jwks_uri:
             return self.jwks_uri
-        return f"{self.issuer_url.rstrip('/')}/.well-known/jwks.json"
+        issuer = self.issuer_url.rstrip("/")
+        if self.provider_hint == "adfs":
+            # ADFS: https://adfs.corp.example.com/adfs/discovery/keys
+            return f"{issuer}/discovery/keys"
+        if self.provider_hint == "entra_id":
+            # Azure Entra ID: https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys
+            return f"{issuer}/discovery/v2.0/keys"
+        # Generic OIDC
+        return f"{issuer}/.well-known/jwks.json"
 
 
 # Module-level JWKS cache
@@ -72,55 +81,29 @@ def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
     return _jwks_cache
 
 
-def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
-    """Validate a JWT Bearer token against JWKS and return claims."""
-    jwks_uri = config.effective_jwks_uri()
-    jwks = _fetch_jwks(jwks_uri)
-
-    try:
-        unverified_header = jwt.get_unverified_header(token)
-    except JWTError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token header: {exc}",
-        ) from exc
-
-    # Find the matching key
-    kid = unverified_header.get("kid")
-    rsa_key: dict[str, str] = {}
+def _extract_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, str]:
+    """Find a JWK matching the given ``kid`` from a JWKS key set."""
     for key in jwks.get("keys", []):
-        if key.get("kid") == kid:
-            rsa_key = {
-                "kty": key["kty"],
-                "kid": key["kid"],
-                "use": key.get("use", "sig"),
-                "n": key["n"],
-                "e": key["e"],
-            }
-            break
+        if key.get("kid") != kid:
+            continue
+        result: dict[str, str] = {
+            "kty": key["kty"],
+            "kid": key["kid"],
+            "use": key.get("use", "sig"),
+        }
+        if "n" in key and "e" in key:
+            result["n"] = key["n"]
+            result["e"] = key["e"]
+        if "x5c" in key:
+            result["x5c"] = key["x5c"]
+        return result
+    return {}
 
-    if not rsa_key:
-        # Key rotation — try refreshing JWKS
-        jwks = _fetch_jwks(jwks_uri, force=True)
-        for key in jwks.get("keys", []):
-            if key.get("kid") == kid:
-                rsa_key = {
-                    "kty": key["kty"],
-                    "kid": key["kid"],
-                    "use": key.get("use", "sig"),
-                    "n": key["n"],
-                    "e": key["e"],
-                }
-                break
 
-    if not rsa_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"No matching key found for kid={kid}",
-        )
-
+def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> dict[str, Any]:
+    """Decode and verify a JWT, raising HTTPException on failure."""
     try:
-        claims = jwt.decode(
+        return jwt.decode(
             token,
             rsa_key,
             algorithms=["RS256"],
@@ -138,10 +121,47 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
             detail=f"Token validation failed: {exc}",
         ) from exc
 
+
+def _extract_scopes(claims: dict[str, Any]) -> set[str]:
+    """Extract scopes from JWT claims (supports OIDC ``scope`` and ADFS ``scp``)."""
+    raw = claims.get("scope") or claims.get("scp", "")
+    if isinstance(raw, list):
+        return set(raw)
+    return set(raw.split())
+
+
+def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
+    """Validate a JWT Bearer token against JWKS and return claims."""
+    jwks_uri = config.effective_jwks_uri()
+    jwks = _fetch_jwks(jwks_uri)
+
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+    except JWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token header: {exc}",
+        ) from exc
+
+    kid = unverified_header.get("kid")
+    rsa_key = _extract_jwk(jwks, kid)
+
+    if not rsa_key:
+        # Key rotation — try refreshing JWKS
+        jwks = _fetch_jwks(jwks_uri, force=True)
+        rsa_key = _extract_jwk(jwks, kid)
+
+    if not rsa_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"No matching key found for kid={kid}",
+        )
+
+    claims = _decode_jwt(token, rsa_key, config)
+
     # Scope check
-    token_scopes = set(claims.get("scope", "").split())
     required = set(config.required_scopes)
-    if required and not required.intersection(token_scopes):
+    if required and not required.intersection(_extract_scopes(claims)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Insufficient scopes. Required: {sorted(required)}",

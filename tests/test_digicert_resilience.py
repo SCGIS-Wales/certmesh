@@ -13,19 +13,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from certmesh.digicert_client import (
+from certmesh.exceptions import (
+    DigiCertAPIError,
+    DigiCertAuthenticationError,
+    DigiCertOrderNotFoundError,
+    DigiCertRateLimitError,
+)
+from certmesh.providers.digicert_client import (
     _build_session,
     _make_retry_decorator,
     _raise_for_digicert_error,
     _RequestIDAdapter,
     _resolve_ca_bundle,
     _validate_response_json,
-)
-from certmesh.exceptions import (
-    DigiCertAPIError,
-    DigiCertAuthenticationError,
-    DigiCertOrderNotFoundError,
-    DigiCertRateLimitError,
 )
 
 JsonDict = dict[str, Any]
@@ -199,7 +199,10 @@ class TestResolveCaBundle:
 class TestBuildSession:
     """Test session construction with TLS, pool, and proxy config."""
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_tls_verify_from_config(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -209,7 +212,10 @@ class TestBuildSession:
         session = _build_session(cfg, {}, None)
         assert session.verify is False
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_ca_bundle_from_env(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -218,7 +224,10 @@ class TestBuildSession:
         session = _build_session(cfg, {}, None)
         assert session.verify == "/custom/ca-bundle.pem"
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_connection_pool_config(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -236,7 +245,10 @@ class TestBuildSession:
         assert adapter._pool_connections == 5
         assert adapter._pool_maxsize == 15
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_default_pool_values(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -249,7 +261,10 @@ class TestBuildSession:
         assert adapter._pool_connections == 10
         assert adapter._pool_maxsize == 20
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_proxy_env_logged(
         self,
         _mock_creds: MagicMock,
@@ -263,11 +278,14 @@ class TestBuildSession:
         cfg: JsonDict = {"tls_verify": True, "timeout_seconds": 10}
         import logging
 
-        with caplog.at_level(logging.INFO, logger="certmesh.digicert_client"):
+        with caplog.at_level(logging.INFO, logger="certmesh.providers.digicert_client"):
             _build_session(cfg, {}, None)
         assert "Proxy environment detected" in caplog.text
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_headers(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -279,7 +297,10 @@ class TestBuildSession:
         assert session.headers["Content-Type"] == "application/json"
         assert session.headers["Accept"] == "application/json"
 
-    @patch("certmesh.digicert_client.creds.resolve_digicert_api_key", return_value="test-key")
+    @patch(
+        "certmesh.providers.digicert_client.creds.resolve_digicert_api_key",
+        return_value="test-key",
+    )
     def test_session_timeout(
         self, _mock_creds: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:

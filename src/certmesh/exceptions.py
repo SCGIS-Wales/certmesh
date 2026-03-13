@@ -254,3 +254,28 @@ class SecretsManagerWriteError(SecretsManagerError):
 
 class SecretsManagerReadError(SecretsManagerError):
     """Raised when reading a secret from AWS Secrets Manager fails."""
+
+
+# =============================================================================
+# Let's Encrypt / ACME
+# =============================================================================
+
+
+class LetsEncryptError(CertMeshError):
+    """Base exception for Let's Encrypt / ACME operations."""
+
+
+class LetsEncryptRegistrationError(LetsEncryptError):
+    """Failed to register or retrieve an ACME account."""
+
+
+class LetsEncryptChallengeError(LetsEncryptError):
+    """Challenge validation failed."""
+
+
+class LetsEncryptOrderError(LetsEncryptError):
+    """Certificate order failed."""
+
+
+class LetsEncryptRateLimitError(LetsEncryptError):
+    """ACME rate limit hit."""

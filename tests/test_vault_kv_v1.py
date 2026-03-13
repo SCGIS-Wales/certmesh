@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from hvac.exceptions import Forbidden, InvalidPath
 
-from certmesh import vault_client as vc
+from certmesh.backends import vault_client as vc
 from certmesh.exceptions import (
     VaultAuthenticationError,
     VaultSecretNotFoundError,

@@ -19,7 +19,7 @@ from certmesh.exceptions import (
     VenafiPrivateKeyExportError,
     VenafiWorkflowApprovalError,
 )
-from certmesh.venafi_client import (
+from certmesh.providers.venafi_client import (
     _authenticate_ldap,
     _authenticate_oauth,
     _is_guid,
@@ -329,8 +329,8 @@ class TestAuthenticateLDAP:
 
 
 class TestAuthenticate:
-    @patch("certmesh.venafi_client.creds.resolve_venafi_credentials")
-    @patch("certmesh.venafi_client._build_session")
+    @patch("certmesh.providers.venafi_client.creds.resolve_venafi_credentials")
+    @patch("certmesh.providers.venafi_client._build_session")
     def test_oauth_path(
         self,
         mock_build: MagicMock,
@@ -351,8 +351,8 @@ class TestAuthenticate:
         assert result is mock_session
         assert mock_session.headers["Authorization"] == "Bearer tok"
 
-    @patch("certmesh.venafi_client.creds.resolve_venafi_credentials")
-    @patch("certmesh.venafi_client._build_session")
+    @patch("certmesh.providers.venafi_client.creds.resolve_venafi_credentials")
+    @patch("certmesh.providers.venafi_client._build_session")
     def test_ldap_path(
         self,
         mock_build: MagicMock,
@@ -373,8 +373,8 @@ class TestAuthenticate:
         assert result is mock_session
         assert mock_session.headers["X-Venafi-Api-Key"] == "key-123"
 
-    @patch("certmesh.venafi_client.creds.resolve_venafi_credentials")
-    @patch("certmesh.venafi_client._build_session")
+    @patch("certmesh.providers.venafi_client.creds.resolve_venafi_credentials")
+    @patch("certmesh.providers.venafi_client._build_session")
     def test_unsupported_auth_method_raises(
         self,
         mock_build: MagicMock,
@@ -389,8 +389,8 @@ class TestAuthenticate:
         with pytest.raises(ConfigurationError, match="Unsupported"):
             authenticate(venafi_cfg_oauth, vault_cfg, None)
 
-    @patch("certmesh.venafi_client.creds.resolve_venafi_credentials")
-    @patch("certmesh.venafi_client._build_session")
+    @patch("certmesh.providers.venafi_client.creds.resolve_venafi_credentials")
+    @patch("certmesh.providers.venafi_client._build_session")
     def test_missing_base_url_raises(
         self,
         mock_build: MagicMock,
@@ -778,12 +778,12 @@ class TestRequestCertificate:
         san_dns_names=["new.example.com"],
     )
 
-    @patch("certmesh.venafi_client.cu.assemble_bundle")
-    @patch("certmesh.venafi_client.cu.parse_pkcs12_bundle")
-    @patch("certmesh.venafi_client._download_pkcs12")
-    @patch("certmesh.venafi_client._poll_certificate_ready")
-    @patch("certmesh.venafi_client._approve_workflow_tickets")
-    @patch("certmesh.venafi_client._resolve_pkcs12_passphrase", return_value="pass")
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="pass")
     def test_server_side_key_success(
         self,
         mock_passphrase: MagicMock,
@@ -824,15 +824,15 @@ class TestRequestCertificate:
         mock_parse.assert_called_once()
         mock_assemble.assert_called_once()
 
-    @patch("certmesh.venafi_client.cu.assemble_bundle")
-    @patch("certmesh.venafi_client._split_pem_chain")
-    @patch("certmesh.venafi_client._download_base64_cert")
-    @patch("certmesh.venafi_client._poll_certificate_ready")
-    @patch("certmesh.venafi_client._approve_workflow_tickets")
-    @patch("certmesh.venafi_client.cu.csr_to_pem", return_value="CSR-PEM-DATA")
-    @patch("certmesh.venafi_client.cu.build_csr")
-    @patch("certmesh.venafi_client.cu.private_key_to_pem", return_value=b"KEY-PEM")
-    @patch("certmesh.venafi_client.cu.generate_rsa_private_key")
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client._split_pem_chain")
+    @patch("certmesh.providers.venafi_client._download_base64_cert")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client.cu.csr_to_pem", return_value="CSR-PEM-DATA")
+    @patch("certmesh.providers.venafi_client.cu.build_csr")
+    @patch("certmesh.providers.venafi_client.cu.private_key_to_pem", return_value=b"KEY-PEM")
+    @patch("certmesh.providers.venafi_client.cu.generate_rsa_private_key")
     def test_client_side_csr_success(
         self,
         mock_keygen: MagicMock,
@@ -933,12 +933,12 @@ class TestRenewAndDownloadCertificate:
 
     _GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
-    @patch("certmesh.venafi_client.cu.assemble_bundle")
-    @patch("certmesh.venafi_client.cu.parse_pkcs12_bundle")
-    @patch("certmesh.venafi_client._download_pkcs12")
-    @patch("certmesh.venafi_client._poll_certificate_ready")
-    @patch("certmesh.venafi_client._approve_workflow_tickets")
-    @patch("certmesh.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
     def test_success_guid_based(
         self,
         mock_passphrase: MagicMock,
@@ -978,13 +978,13 @@ class TestRenewAndDownloadCertificate:
         mock_poll.assert_called_once()
         mock_download.assert_called_once()
 
-    @patch("certmesh.venafi_client.cu.assemble_bundle")
-    @patch("certmesh.venafi_client.cu.parse_pkcs12_bundle")
-    @patch("certmesh.venafi_client._download_pkcs12")
-    @patch("certmesh.venafi_client._poll_certificate_ready")
-    @patch("certmesh.venafi_client._approve_workflow_tickets")
-    @patch("certmesh.venafi_client._resolve_dn_from_guid")
-    @patch("certmesh.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_dn_from_guid")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
     def test_resolves_dn_when_not_in_response(
         self,
         mock_passphrase: MagicMock,
@@ -1057,8 +1057,8 @@ class TestRenewAndDownloadCertificate:
                 certificate_guid=self._GUID,
             )
 
-    @patch("certmesh.venafi_client._poll_certificate_ready")
-    @patch("certmesh.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
     def test_workflow_approval_failure_is_non_fatal(
         self,
         mock_approve: MagicMock,
@@ -1101,7 +1101,7 @@ class TestApproveWorkflowTickets:
     """Test _approve_workflow_tickets indirectly via mock HTTP calls."""
 
     def test_no_tickets(self, session: MagicMock, venafi_cfg_oauth: JsonDict) -> None:
-        from certmesh.venafi_client import _approve_workflow_tickets
+        from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         session.post.return_value = _mock_response(
             json_data={"Tickets": []},
@@ -1122,7 +1122,7 @@ class TestApproveWorkflowTickets:
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _approve_workflow_tickets
+        from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         enumerate_resp = _mock_response(
             json_data={"Tickets": [{"Id": 42}]},
@@ -1145,7 +1145,7 @@ class TestApproveWorkflowTickets:
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _approve_workflow_tickets
+        from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         enumerate_resp = _mock_response(
             json_data={"Tickets": [{"Id": 7}]},
@@ -1172,7 +1172,7 @@ class TestApproveWorkflowTickets:
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _approve_workflow_tickets
+        from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         session.post.return_value = _mock_response(
             status_code=500,
@@ -1195,14 +1195,14 @@ class TestApproveWorkflowTickets:
 
 
 class TestPollCertificateReady:
-    @patch("certmesh.venafi_client.time.sleep")
+    @patch("certmesh.providers.venafi_client.time.sleep")
     def test_ready_immediately(
         self,
         mock_sleep: MagicMock,
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _poll_certificate_ready
+        from certmesh.providers.venafi_client import _poll_certificate_ready
 
         session.get.return_value = _mock_response(
             json_data={"Stage": 500, "Status": "OK"},
@@ -1216,14 +1216,14 @@ class TestPollCertificateReady:
         )
         mock_sleep.assert_not_called()
 
-    @patch("certmesh.venafi_client.time.sleep")
+    @patch("certmesh.providers.venafi_client.time.sleep")
     def test_becomes_ready_after_one_poll(
         self,
         mock_sleep: MagicMock,
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _poll_certificate_ready
+        from certmesh.providers.venafi_client import _poll_certificate_ready
 
         not_ready = _mock_response(json_data={"Stage": 200, "Status": "Pending"})
         ready = _mock_response(json_data={"Stage": 500, "Status": "OK"})
@@ -1237,14 +1237,14 @@ class TestPollCertificateReady:
             timeout=10,
         )
 
-    @patch("certmesh.venafi_client.time.sleep")
+    @patch("certmesh.providers.venafi_client.time.sleep")
     def test_timeout_raises(
         self,
         mock_sleep: MagicMock,
         session: MagicMock,
         venafi_cfg_oauth: JsonDict,
     ) -> None:
-        from certmesh.venafi_client import _poll_certificate_ready
+        from certmesh.providers.venafi_client import _poll_certificate_ready
 
         # Always return not-ready
         session.get.return_value = _mock_response(
@@ -1272,7 +1272,7 @@ class TestPollCertificateReady:
 
 class TestDownloadPkcs12:
     def test_json_response_with_cert_data(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_pkcs12
+        from certmesh.providers.venafi_client import _download_pkcs12
 
         cert_b64 = base64.b64encode(b"PKCS12BINARYDATA").decode()
         session.post.return_value = _mock_response(
@@ -1289,7 +1289,7 @@ class TestDownloadPkcs12:
         assert result == b"PKCS12BINARYDATA"
 
     def test_binary_response(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_pkcs12
+        from certmesh.providers.venafi_client import _download_pkcs12
 
         session.post.return_value = _mock_response(
             content=b"BINARYP12",
@@ -1305,7 +1305,7 @@ class TestDownloadPkcs12:
         assert result == b"BINARYP12"
 
     def test_json_response_missing_cert_data(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_pkcs12
+        from certmesh.providers.venafi_client import _download_pkcs12
 
         session.post.return_value = _mock_response(
             json_data={"Nope": "nothing"},
@@ -1321,7 +1321,7 @@ class TestDownloadPkcs12:
             )
 
     def test_private_key_denied(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_pkcs12
+        from certmesh.providers.venafi_client import _download_pkcs12
 
         session.post.return_value = _mock_response(
             status_code=400,
@@ -1338,7 +1338,7 @@ class TestDownloadPkcs12:
             )
 
     def test_generic_400_error(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_pkcs12
+        from certmesh.providers.venafi_client import _download_pkcs12
 
         session.post.return_value = _mock_response(
             status_code=400,
@@ -1357,7 +1357,7 @@ class TestDownloadPkcs12:
 
 class TestDownloadBase64Cert:
     def test_json_response_success(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_base64_cert
+        from certmesh.providers.venafi_client import _download_base64_cert
 
         session.post.return_value = _mock_response(
             json_data={"CertificateData": "BASE64PEMSTRING"},
@@ -1372,7 +1372,7 @@ class TestDownloadBase64Cert:
         assert result == "BASE64PEMSTRING"
 
     def test_text_response(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_base64_cert
+        from certmesh.providers.venafi_client import _download_base64_cert
 
         session.post.return_value = _mock_response(
             text="-----BEGIN CERTIFICATE-----\nDATA\n-----END CERTIFICATE-----",
@@ -1387,7 +1387,7 @@ class TestDownloadBase64Cert:
         assert "BEGIN CERTIFICATE" in result
 
     def test_missing_cert_data_in_json(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _download_base64_cert
+        from certmesh.providers.venafi_client import _download_base64_cert
 
         session.post.return_value = _mock_response(
             json_data={"Empty": True},
@@ -1410,14 +1410,14 @@ class TestDownloadBase64Cert:
 class TestResolvePkcs12Passphrase:
     @patch.dict("os.environ", {"TEST_PKCS12_PASSPHRASE": "mypass"})
     def test_resolves_from_env(self, venafi_cfg_oauth: JsonDict) -> None:
-        from certmesh.venafi_client import _resolve_pkcs12_passphrase
+        from certmesh.providers.venafi_client import _resolve_pkcs12_passphrase
 
         result = _resolve_pkcs12_passphrase(venafi_cfg_oauth)
         assert result == "mypass"
 
     @patch.dict("os.environ", {}, clear=True)
     def test_missing_passphrase_raises(self, venafi_cfg_oauth: JsonDict) -> None:
-        from certmesh.venafi_client import _resolve_pkcs12_passphrase
+        from certmesh.providers.venafi_client import _resolve_pkcs12_passphrase
 
         with pytest.raises(ConfigurationError, match="passphrase"):
             _resolve_pkcs12_passphrase(venafi_cfg_oauth)
@@ -1430,7 +1430,7 @@ class TestResolvePkcs12Passphrase:
 
 class TestResolveDnFromGuid:
     def test_success(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _resolve_dn_from_guid
+        from certmesh.providers.venafi_client import _resolve_dn_from_guid
 
         session.get.return_value = _mock_response(
             json_data={"DN": "\\VED\\Policy\\cert1"},
@@ -1439,15 +1439,1030 @@ class TestResolveDnFromGuid:
         assert dn == "\\VED\\Policy\\cert1"
 
     def test_empty_dn_raises(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _resolve_dn_from_guid
+        from certmesh.providers.venafi_client import _resolve_dn_from_guid
 
         session.get.return_value = _mock_response(json_data={"DN": ""})
         with pytest.raises(VenafiCertificateNotFoundError, match="resolve DN"):
             _resolve_dn_from_guid(session, BASE_URL, "bad-guid", timeout=10)
 
     def test_404_raises(self, session: MagicMock) -> None:
-        from certmesh.venafi_client import _resolve_dn_from_guid
+        from certmesh.providers.venafi_client import _resolve_dn_from_guid
 
         session.get.return_value = _mock_response(status_code=404, ok=False)
         with pytest.raises(VenafiCertificateNotFoundError):
             _resolve_dn_from_guid(session, BASE_URL, "no-guid", timeout=10)
+
+
+# ============================================================================
+# Tests: Token expiration handling
+# ============================================================================
+
+
+class TestTokenExpirationHandling:
+    """Test that when a Venafi OAuth2 token expires mid-operation the proper
+    error is raised with an actionable message."""
+
+    def test_list_certificates_token_expired(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A 401 during list_certificates signals an expired token."""
+        session.get.return_value = _mock_response(
+            status_code=401,
+            ok=False,
+            text="Token has expired",
+        )
+        with pytest.raises(VenafiAuthenticationError, match="401"):
+            list_certificates(session, venafi_cfg_oauth)
+
+    def test_search_certificates_token_expired(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A 401 during search_certificates signals an expired token."""
+        session.post.return_value = _mock_response(
+            status_code=401,
+            ok=False,
+            text="Token has expired",
+        )
+        with pytest.raises(VenafiAuthenticationError, match="authentication expired"):
+            search_certificates(session, venafi_cfg_oauth, common_name="test")
+
+    def test_describe_certificate_token_expired(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A 401 during describe_certificate signals an expired token."""
+        session.get.return_value = _mock_response(
+            status_code=401,
+            ok=False,
+            text="Bearer token is expired",
+        )
+        with pytest.raises(VenafiAuthenticationError, match="401"):
+            describe_certificate(
+                session,
+                venafi_cfg_oauth,
+                certificate_guid="some-guid-1234-5678-abcd-ef0123456789",
+            )
+
+    def test_revoke_certificate_token_expired(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A 401 during revoke_certificate signals an expired token."""
+        session.post.return_value = _mock_response(
+            status_code=401,
+            ok=False,
+            text="Token has expired",
+        )
+        with pytest.raises(VenafiAuthenticationError, match="401"):
+            revoke_certificate(
+                session,
+                venafi_cfg_oauth,
+                certificate_dn="\\VED\\Policy\\cert1",
+            )
+
+    def test_oauth_token_empty_in_refresh_response(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """An OAuth response with an empty access_token raises with a
+        helpful message about the missing token."""
+        session.post.return_value = _mock_response(
+            json_data={"access_token": ""},
+        )
+        with pytest.raises(VenafiAuthenticationError, match="access_token"):
+            _authenticate_oauth(
+                session,
+                BASE_URL,
+                "user",
+                "pass",
+                venafi_cfg_oauth,
+                timeout=10,
+            )
+
+
+# ============================================================================
+# Tests: Malformed API responses
+# ============================================================================
+
+
+class TestMalformedAPIResponses:
+    """Test handling of responses with missing fields, empty lists, invalid
+    JSON structure, and null values in required fields."""
+
+    def test_describe_missing_expected_fields(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A describe response with empty JSON still produces a detail object
+        with default/empty values rather than crashing."""
+        session.get.return_value = _mock_response(json_data={})
+
+        detail = describe_certificate(
+            session,
+            venafi_cfg_oauth,
+            certificate_guid="11111111-2222-3333-4444-555555555555",
+        )
+        # Fields should fall back to defaults
+        assert detail.guid == "11111111-2222-3333-4444-555555555555"
+        assert detail.dn == ""
+        assert detail.name == ""
+        assert detail.serial_number == ""
+        assert detail.key_size == 0
+        assert detail.san_dns_names == []
+
+    def test_list_certificates_empty_list_response(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """An empty Certificates list should return an empty list."""
+        session.get.return_value = _mock_response(
+            json_data={"Certificates": []},
+        )
+        results = list_certificates(session, venafi_cfg_oauth)
+        assert results == []
+
+    def test_list_certificates_missing_certificates_key(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A response with no Certificates key should return an empty list
+        rather than raising a KeyError."""
+        session.get.return_value = _mock_response(
+            json_data={"TotalCount": 0},
+        )
+        results = list_certificates(session, venafi_cfg_oauth)
+        assert results == []
+
+    def test_search_certificates_empty_result(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A search returning no matching certificates should produce an
+        empty list."""
+        session.post.return_value = _mock_response(
+            json_data={"Certificates": []},
+        )
+        results = search_certificates(
+            session,
+            venafi_cfg_oauth,
+            common_name="nonexistent.example.com",
+        )
+        assert results == []
+
+    def test_list_certificates_null_values_in_entry(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """Null values in certificate entry fields should be handled
+        gracefully, falling back to empty strings."""
+        entry: JsonDict = {
+            "Guid": None,
+            "DN": None,
+            "Name": None,
+            "CreatedOn": None,
+            "SchemaClass": None,
+        }
+        session.get.return_value = _mock_response(
+            json_data={"Certificates": [entry]},
+        )
+        results = list_certificates(session, venafi_cfg_oauth)
+        assert len(results) == 1
+        # None gets coerced by the .get() fallback logic
+        summary = results[0]
+        assert summary.guid is None or summary.guid == ""
+        assert summary.name is None or summary.name == ""
+
+    def test_describe_null_values_in_required_fields(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """Null values in the describe response should not crash; the detail
+        object falls back to sensible defaults."""
+        data: JsonDict = {
+            "Guid": None,
+            "DN": None,
+            "Name": None,
+            "CreatedOn": None,
+            "Serial": None,
+            "Thumbprint": None,
+            "ValidFrom": None,
+            "ValidTo": None,
+            "Issuer": None,
+            "Subject": None,
+            "KeyAlgorithm": None,
+            "KeySize": None,
+            "Stage": None,
+            "Status": None,
+            "InError": None,
+        }
+        session.get.return_value = _mock_response(json_data=data)
+
+        detail = describe_certificate(
+            session,
+            venafi_cfg_oauth,
+            certificate_guid="11111111-2222-3333-4444-555555555555",
+        )
+        # The function should fall back to the GUID from the argument
+        assert detail.guid is None or detail.guid == "11111111-2222-3333-4444-555555555555"
+
+    def test_search_response_with_lowercase_keys(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """The client should handle lowercase JSON keys (case-insensitive
+        fallback via the secondary .get())."""
+        entry: JsonDict = {
+            "guid": "aaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "dn": "\\VED\\Policy\\Certs\\test",
+            "name": "test.example.com",
+            "created_on": "2025-01-01T00:00:00Z",
+            "schema_class": "X509 Server Certificate",
+        }
+        session.post.return_value = _mock_response(
+            json_data={"certificates": [entry]},
+        )
+        results = search_certificates(session, venafi_cfg_oauth)
+        assert len(results) == 1
+        assert results[0].guid == "aaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        assert results[0].name == "test.example.com"
+
+
+# ============================================================================
+# Tests: Pagination edge cases
+# ============================================================================
+
+
+class TestPaginationEdgeCases:
+    """Test list_certificates pagination boundary conditions."""
+
+    def test_first_page_returns_zero_results(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """First page with 0 results should return an empty list."""
+        session.get.return_value = _mock_response(
+            json_data={"Certificates": []},
+        )
+        results = list_certificates(session, venafi_cfg_oauth, limit=50, offset=0)
+        assert results == []
+
+    def test_single_item_page_at_offset_boundary(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """A page with exactly one item at a non-zero offset should work."""
+        session.get.return_value = _mock_response(
+            json_data={"Certificates": [_CERT_ENTRY]},
+        )
+        results = list_certificates(session, venafi_cfg_oauth, limit=1, offset=99)
+        assert len(results) == 1
+        assert results[0].guid == "aaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        # Verify correct offset was sent
+        call_kwargs = session.get.call_args
+        params = call_kwargs.kwargs.get("params") or call_kwargs[1].get("params")
+        assert params["Offset"] == 99
+        assert params["Limit"] == 1
+
+    def test_pagination_with_count_mismatch(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """If the server says TotalCount=5 but only returns 2 entries the
+        client should return what was actually provided."""
+        entries = [
+            {
+                "Guid": f"guid-{i}",
+                "DN": f"\\VED\\Policy\\cert{i}",
+                "Name": f"cert{i}.example.com",
+                "CreatedOn": "2025-01-01T00:00:00Z",
+                "SchemaClass": "X509 Server Certificate",
+            }
+            for i in range(2)
+        ]
+        session.get.return_value = _mock_response(
+            json_data={"Certificates": entries, "TotalCount": 5},
+        )
+        results = list_certificates(session, venafi_cfg_oauth, limit=5, offset=0)
+        assert len(results) == 2
+
+    def test_search_pagination_offset_and_limit_sent(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """Verify search_certificates passes Offset and Limit in the payload."""
+        session.post.return_value = _mock_response(
+            json_data={"Certificates": []},
+        )
+        search_certificates(
+            session,
+            venafi_cfg_oauth,
+            common_name="test",
+            limit=10,
+            offset=20,
+        )
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["Limit"] == 10
+        assert payload["Offset"] == 20
+
+
+# ============================================================================
+# Tests: DN path handling
+# ============================================================================
+
+
+class TestDNPathHandling:
+    """Test the DN prefix logic inside renew_and_download_certificate when the
+    certificate_guid is not a GUID (i.e. is treated as a DN path)."""
+
+    _DN_WITH_PREFIX = "\\VED\\Policy\\Certificates\\cert1"
+    _DN_WITHOUT_PREFIX = "Certificates\\cert1"
+    _DN_ONLY_BACKSLASH = "\\cert1"
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    def test_dn_with_prefix_not_double_prefixed(
+        self,
+        mock_passphrase: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """A DN that already starts with \\VED\\ should NOT get double-prefixed."""
+        session.post.return_value = _mock_response(
+            json_data={
+                "Success": True,
+                "CertificateDN": self._DN_WITH_PREFIX,
+            },
+        )
+        mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"c", b"k", b"ch")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_bundle.common_name = "cert1"
+        mock_bundle.serial_number = "00"
+        mock_assemble.return_value = mock_bundle
+
+        renew_and_download_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            certificate_guid=self._DN_WITH_PREFIX,
+        )
+
+        # Verify the payload sent to the renew endpoint
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["CertificateDN"] == self._DN_WITH_PREFIX
+        assert "\\VED\\Policy\\\\VED\\" not in payload["CertificateDN"]
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    def test_dn_without_prefix_gets_prefixed(
+        self,
+        mock_passphrase: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """A DN without the \\VED\\ prefix should be auto-prefixed."""
+        expected_dn = f"\\VED\\Policy\\{self._DN_WITHOUT_PREFIX}"
+        session.post.return_value = _mock_response(
+            json_data={
+                "Success": True,
+                "CertificateDN": expected_dn,
+            },
+        )
+        mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"c", b"k", b"ch")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_bundle.common_name = "cert1"
+        mock_bundle.serial_number = "00"
+        mock_assemble.return_value = mock_bundle
+
+        renew_and_download_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            certificate_guid=self._DN_WITHOUT_PREFIX,
+        )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["CertificateDN"] == expected_dn
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    def test_dn_with_only_backslash_prefix_gets_prefixed(
+        self,
+        mock_passphrase: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """A DN starting with just a backslash (not \\VED\\) should be
+        auto-prefixed with \\VED\\Policy\\."""
+        expected_dn = f"\\VED\\Policy\\{self._DN_ONLY_BACKSLASH}"
+        session.post.return_value = _mock_response(
+            json_data={
+                "Success": True,
+                "CertificateDN": expected_dn,
+            },
+        )
+        mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"c", b"k", b"ch")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_bundle.common_name = "cert1"
+        mock_bundle.serial_number = "00"
+        mock_assemble.return_value = mock_bundle
+
+        renew_and_download_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            certificate_guid=self._DN_ONLY_BACKSLASH,
+        )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["CertificateDN"] == expected_dn
+
+    def test_empty_dn_renewal_rejected(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """An empty certificate_guid string (not a GUID, not a DN) should
+        still attempt the renewal and the server should reject it, producing
+        a VenafiAPIError."""
+        session.post.return_value = _mock_response(
+            json_data={"Success": False, "Error": "Invalid DN"},
+        )
+        with pytest.raises(VenafiAPIError, match="Invalid DN"):
+            renew_and_download_certificate(
+                session,
+                venafi_cfg_oauth,
+                vault_cfg,
+                None,
+                certificate_guid="",
+            )
+
+
+# ============================================================================
+# Tests: Certificate request edge cases
+# ============================================================================
+
+
+class TestCertificateRequestEdgeCases:
+    """Test request_certificate with unusual CN values and CSR modes."""
+
+    def test_request_with_empty_cn_submits_empty_subject(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """Requesting a certificate with an empty CN should still call the
+        API, which will reject it with an error."""
+        empty_subject = SubjectInfo(
+            common_name="",
+            organisation="Acme",
+            organisational_unit="IT",
+            country="US",
+            state="Maryland",
+            locality="Baltimore",
+        )
+        session.post.return_value = _mock_response(
+            status_code=400,
+            ok=False,
+            text="Subject cannot be empty",
+        )
+        with pytest.raises(VenafiAPIError):
+            request_certificate(
+                session,
+                venafi_cfg_oauth,
+                vault_cfg,
+                None,
+                policy_dn="\\VED\\Policy\\Certs",
+                subject=empty_subject,
+            )
+
+    def test_request_with_very_long_cn(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """A very long CN should be forwarded to the API without the client
+        truncating it; the API may accept or reject it."""
+        long_cn = "a" * 300 + ".example.com"
+        long_subject = SubjectInfo(
+            common_name=long_cn,
+            organisation="Acme",
+            organisational_unit="IT",
+            country="US",
+            state="Maryland",
+            locality="Baltimore",
+        )
+        session.post.return_value = _mock_response(
+            json_data={
+                "CertificateDN": "\\VED\\Policy\\Certs\\longcn",
+                "Guid": "long-guid",
+            },
+        )
+
+        # The request should succeed up to the point where it needs to
+        # approve / poll; since the subject reaches the API, that is enough.
+        # We mock poll to raise so we stop early.
+        with (
+            patch(
+                "certmesh.providers.venafi_client._approve_workflow_tickets",
+            ),
+            patch(
+                "certmesh.providers.venafi_client._poll_certificate_ready",
+                side_effect=VenafiPollingTimeoutError("timeout"),
+            ),
+        ):
+            with pytest.raises(VenafiPollingTimeoutError):
+                request_certificate(
+                    session,
+                    venafi_cfg_oauth,
+                    vault_cfg,
+                    None,
+                    policy_dn="\\VED\\Policy\\Certs",
+                    subject=long_subject,
+                )
+
+        # Verify the full CN was sent
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["Subject"] == long_cn
+
+    def test_request_with_special_characters_in_cn(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """Special characters in the CN should be forwarded as-is."""
+        special_cn = 'test+cert=1/OU=Special & "Quoted".example.com'
+        special_subject = SubjectInfo(
+            common_name=special_cn,
+            organisation="Acme",
+            organisational_unit="IT",
+            country="US",
+            state="Maryland",
+            locality="Baltimore",
+        )
+        session.post.return_value = _mock_response(
+            json_data={
+                "CertificateDN": "\\VED\\Policy\\Certs\\special",
+                "Guid": "special-guid",
+            },
+        )
+        with (
+            patch(
+                "certmesh.providers.venafi_client._approve_workflow_tickets",
+            ),
+            patch(
+                "certmesh.providers.venafi_client._poll_certificate_ready",
+                side_effect=VenafiPollingTimeoutError("timeout"),
+            ),
+        ):
+            with pytest.raises(VenafiPollingTimeoutError):
+                request_certificate(
+                    session,
+                    venafi_cfg_oauth,
+                    vault_cfg,
+                    None,
+                    policy_dn="\\VED\\Policy\\Certs",
+                    subject=special_subject,
+                )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["Subject"] == special_cn
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client._split_pem_chain")
+    @patch("certmesh.providers.venafi_client._download_base64_cert")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client.cu.csr_to_pem", return_value="CSR-PEM")
+    @patch("certmesh.providers.venafi_client.cu.build_csr")
+    @patch("certmesh.providers.venafi_client.cu.private_key_to_pem", return_value=b"KEY-PEM")
+    @patch("certmesh.providers.venafi_client.cu.generate_rsa_private_key")
+    def test_client_side_csr_sends_pkcs10(
+        self,
+        mock_keygen: MagicMock,
+        mock_key_pem: MagicMock,
+        mock_build_csr: MagicMock,
+        mock_csr_pem: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_dl_b64: MagicMock,
+        mock_split: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """Client-side CSR mode should send a PKCS10 field in the payload."""
+        subject = SubjectInfo(
+            common_name="csr.example.com",
+            organisation="Acme",
+            organisational_unit="IT",
+            country="US",
+            state="Maryland",
+            locality="Baltimore",
+            san_dns_names=["csr.example.com"],
+        )
+        session.post.return_value = _mock_response(
+            json_data={
+                "CertificateDN": "\\VED\\Policy\\Certs\\csr",
+                "Guid": "csr-guid",
+            },
+        )
+        mock_dl_b64.return_value = "PEM-CERT"
+        mock_split.return_value = (b"leaf", b"chain")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_assemble.return_value = mock_bundle
+
+        request_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            policy_dn="\\VED\\Policy\\Certs",
+            subject=subject,
+            use_csr=True,
+        )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert "PKCS10" in payload
+        assert payload["PKCS10"] == "CSR-PEM"
+        # KeyBitSize should NOT be present in CSR mode
+        assert "KeyBitSize" not in payload
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="pass")
+    def test_server_side_key_sends_key_bit_size(
+        self,
+        mock_passphrase: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """Server-side key mode should send KeyBitSize and NOT PKCS10."""
+        subject = SubjectInfo(
+            common_name="server.example.com",
+            organisation="Acme",
+            organisational_unit="IT",
+            country="US",
+            state="Maryland",
+            locality="Baltimore",
+        )
+        session.post.return_value = _mock_response(
+            json_data={
+                "CertificateDN": "\\VED\\Policy\\Certs\\server",
+                "Guid": "server-guid",
+            },
+        )
+        mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"cert", b"key", b"chain")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_assemble.return_value = mock_bundle
+
+        request_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            policy_dn="\\VED\\Policy\\Certs",
+            subject=subject,
+            use_csr=False,
+        )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert "KeyBitSize" in payload
+        assert "PKCS10" not in payload
+
+
+# ============================================================================
+# Tests: HTTP error code mapping
+# ============================================================================
+
+
+class TestHTTPErrorCodeMapping:
+    """Test that specific HTTP status codes from _raise_for_status map to the
+    correct exception types with appropriate messages."""
+
+    def test_401_maps_to_venafi_auth_error(self) -> None:
+        resp = _mock_response(status_code=401, ok=False, text="unauthorized")
+        with pytest.raises(VenafiAuthenticationError, match="401"):
+            _raise_for_status(resp, "test operation")
+
+    def test_403_maps_to_venafi_auth_error(self) -> None:
+        resp = _mock_response(status_code=403, ok=False, text="forbidden")
+        with pytest.raises(VenafiAuthenticationError, match="403"):
+            _raise_for_status(resp, "test operation")
+
+    def test_403_message_includes_permissions_hint(self) -> None:
+        resp = _mock_response(status_code=403, ok=False, text="access denied")
+        with pytest.raises(VenafiAuthenticationError, match="permissions"):
+            _raise_for_status(resp, "test operation")
+
+    def test_404_maps_to_venafi_certificate_not_found_error(self) -> None:
+        resp = _mock_response(status_code=404, ok=False, text="not found")
+        with pytest.raises(VenafiCertificateNotFoundError, match="404"):
+            _raise_for_status(resp, "test operation")
+
+    def test_500_maps_to_venafi_api_error(self) -> None:
+        resp = _mock_response(status_code=500, ok=False, text="internal server error")
+        with pytest.raises(VenafiAPIError, match="unexpected response"):
+            _raise_for_status(resp, "test operation")
+
+    def test_500_includes_status_code_attribute(self) -> None:
+        resp = _mock_response(status_code=500, ok=False, text="server error")
+        with pytest.raises(VenafiAPIError) as exc_info:
+            _raise_for_status(resp, "test operation")
+        assert exc_info.value.status_code == 500
+
+    def test_503_maps_to_venafi_api_error(self) -> None:
+        resp = _mock_response(status_code=503, ok=False, text="service unavailable")
+        with pytest.raises(VenafiAPIError, match="unexpected response"):
+            _raise_for_status(resp, "test operation")
+
+    def test_503_preserves_body_for_debugging(self) -> None:
+        resp = _mock_response(
+            status_code=503,
+            ok=False,
+            text="service unavailable - retry later",
+        )
+        with pytest.raises(VenafiAPIError) as exc_info:
+            _raise_for_status(resp, "test operation")
+        assert exc_info.value.status_code == 503
+        assert "service unavailable" in (exc_info.value.body or "")
+
+    def test_200_does_not_raise(self) -> None:
+        resp = _mock_response(status_code=200)
+        # Should not raise
+        _raise_for_status(resp, "test operation")
+
+    def test_204_does_not_raise(self) -> None:
+        resp = _mock_response(status_code=204)
+        _raise_for_status(resp, "test operation")
+
+    def test_context_string_included_in_auth_error_message(self) -> None:
+        resp = _mock_response(status_code=401, ok=False)
+        with pytest.raises(VenafiAuthenticationError, match="Renew certificate"):
+            _raise_for_status(resp, "Renew certificate")
+
+    def test_context_string_included_in_api_error_message(self) -> None:
+        resp = _mock_response(status_code=502, ok=False, text="bad gateway")
+        with pytest.raises(VenafiAPIError, match="List certificates"):
+            _raise_for_status(resp, "List certificates")
+
+
+# ============================================================================
+# Tests: Circuit breaker integration
+# ============================================================================
+
+
+class TestCircuitBreakerIntegration:
+    """Test circuit breaker state transitions when integrated with Venafi
+    client functions."""
+
+    def test_repeated_failures_open_circuit(self) -> None:
+        """After enough consecutive failures the circuit breaker should open
+        and subsequent calls should raise CircuitBreakerOpenError.
+
+        Tested directly against the circuit breaker, because the Venafi
+        client creates a fresh breaker per public function call.
+        """
+        from certmesh.circuit_breaker import create_circuit_breaker
+        from certmesh.exceptions import CircuitBreakerOpenError
+
+        cb = create_circuit_breaker(
+            failure_threshold=2,
+            recovery_timeout_seconds=300,
+            name="venafi-tpp-test",
+        )
+
+        @cb
+        def failing_op() -> None:
+            raise VenafiAPIError("server error")
+
+        # First call — fails, circuit stays CLOSED (failure 1/2)
+        with pytest.raises(VenafiAPIError):
+            failing_op()
+
+        # Second call — fails, circuit transitions CLOSED -> OPEN (failure 2/2)
+        with pytest.raises(VenafiAPIError):
+            failing_op()
+
+        # Third call — circuit is OPEN, should raise CircuitBreakerOpenError
+        with pytest.raises(CircuitBreakerOpenError, match="OPEN"):
+            failing_op()
+
+    def test_success_resets_circuit_breaker(self) -> None:
+        """A successful call should reset the circuit breaker failure count."""
+        from certmesh.circuit_breaker import create_circuit_breaker
+        from certmesh.exceptions import CircuitBreakerOpenError
+
+        cb = create_circuit_breaker(
+            failure_threshold=3,
+            recovery_timeout_seconds=300,
+            name="venafi-tpp-reset-test",
+        )
+
+        call_should_fail = True
+
+        @cb
+        def maybe_fail() -> list:
+            if call_should_fail:
+                raise VenafiAPIError("server error")
+            return []
+
+        # One failure
+        with pytest.raises(VenafiAPIError):
+            maybe_fail()
+
+        # One success — resets counter
+        call_should_fail = False
+        result = maybe_fail()
+        assert result == []
+
+        # Two more failures — should NOT open circuit (counter was reset)
+        call_should_fail = True
+        with pytest.raises(VenafiAPIError):
+            maybe_fail()
+        with pytest.raises(VenafiAPIError):
+            maybe_fail()
+
+        # Third failure after reset — circuit opens now (3/3)
+        with pytest.raises(VenafiAPIError):
+            maybe_fail()
+
+        # Now it should be open
+        with pytest.raises(CircuitBreakerOpenError):
+            maybe_fail()
+
+
+# ============================================================================
+# Tests: Renewal DN path edge cases
+# ============================================================================
+
+
+class TestRenewalDNPathEdgeCases:
+    """Additional tests for renewal with DN-based identifiers."""
+
+    _GUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="p@ss")
+    def test_guid_based_renewal_wraps_in_braces(
+        self,
+        mock_passphrase: MagicMock,
+        mock_approve: MagicMock,
+        mock_poll: MagicMock,
+        mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """When certificate_guid is a GUID, the payload should contain
+        CertificateGUID wrapped in braces."""
+        session.post.return_value = _mock_response(
+            json_data={
+                "Success": True,
+                "CertificateDN": "\\VED\\Policy\\cert",
+            },
+        )
+        mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"c", b"k", b"ch")
+        mock_bundle = MagicMock(spec=CertificateBundle)
+        mock_bundle.common_name = "cert"
+        mock_bundle.serial_number = "00"
+        mock_assemble.return_value = mock_bundle
+
+        renew_and_download_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            certificate_guid=self._GUID,
+        )
+
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert "CertificateGUID" in payload
+        assert payload["CertificateGUID"] == f"{{{self._GUID}}}"
+
+    def test_renewal_http_error_on_initiation(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """HTTP 500 on the renew POST should raise VenafiAPIError."""
+        session.post.return_value = _mock_response(
+            status_code=500,
+            ok=False,
+            text="internal error",
+        )
+        with pytest.raises(VenafiAPIError):
+            renew_and_download_certificate(
+                session,
+                venafi_cfg_oauth,
+                vault_cfg,
+                None,
+                certificate_guid=self._GUID,
+            )
+
+    def test_renewal_auth_expired_on_initiation(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """HTTP 401 on the renew POST should raise VenafiAuthenticationError."""
+        session.post.return_value = _mock_response(
+            status_code=401,
+            ok=False,
+            text="token expired",
+        )
+        with pytest.raises(VenafiAuthenticationError, match="401"):
+            renew_and_download_certificate(
+                session,
+                venafi_cfg_oauth,
+                vault_cfg,
+                None,
+                certificate_guid=self._GUID,
+            )
