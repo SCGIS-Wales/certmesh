@@ -44,6 +44,15 @@ dependencies = [
     "boto3>=1.28.0",
     "click>=8.1.0",
     "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "gunicorn>=22.0.0",
+    "python-jose[cryptography]>=3.3.0",
+    "prometheus-client>=0.20.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.0",
+    "slowapi>=0.1.9",
+    "python-json-logger>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -53,8 +62,9 @@ dev = [
     "pytest-mock>=3.12.0",
     "responses>=0.24.0",
     "freezegun>=1.3.0",
-    "moto[acm,acm-pca,iam,sts]>=4.2.0",
+    "moto[acm,acm-pca,iam,sts,secretsmanager]>=4.2.0",
     "ruff>=0.4.0",
+    "pytest-asyncio>=0.23.0",
 ]
 
 [project.scripts]
@@ -97,6 +107,7 @@ ignore = [
     "TC002",  # move third-party import into type-checking block
     "TC003",  # move stdlib import into type-checking block
     "RUF043", # raw strings in match patterns - overly strict for tests
+    "B008",   # Depends() in function defaults is standard FastAPI pattern
 ]
 
 [tool.ruff.lint.isort]

@@ -1,0 +1,18 @@
+apiVersion: v2
+name: certmesh
+description: TLS certificate lifecycle management API for DigiCert, Venafi, Vault PKI, and AWS ACM
+type: application
+version: 0.1.0
+appVersion: "3.0.0"
+kubeVersion: ">=1.28.0"
+keywords:
+  - tls
+  - certificate
+  - digicert
+  - venafi
+  - vault
+  - acm
+  - pki
+maintainers:
+  - name: certmesh
+    url: https://github.com/scgis-wales/certmesh

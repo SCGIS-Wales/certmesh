@@ -47,8 +47,27 @@ def vault_required_for_venafi() -> bool:
 
 
 def vault_required(cfg: JsonDict) -> bool:
-    """Return True if any configured component requires a live Vault client."""
-    return vault_required_for_digicert() or vault_required_for_venafi()
+    """Return True if any *enabled* component requires a live Vault client.
+
+    Inspects ``cfg`` to determine which providers are active, and only
+    checks Vault requirements for those providers.  Previously this
+    function ignored ``cfg`` entirely, which caused false Vault
+    requirement checks for disabled providers (e.g. checking Venafi env
+    vars when only DigiCert is configured).
+    """
+    needs_vault = False
+
+    # DigiCert — check only when the digicert section is present and enabled.
+    digicert_cfg = cfg.get("digicert", {})
+    if digicert_cfg.get("enabled", True):
+        needs_vault = needs_vault or vault_required_for_digicert()
+
+    # Venafi — check only when the venafi section is present and enabled.
+    venafi_cfg = cfg.get("venafi", {})
+    if venafi_cfg.get("enabled", True):
+        needs_vault = needs_vault or vault_required_for_venafi()
+
+    return needs_vault
 
 
 # =============================================================================
@@ -75,8 +94,9 @@ def resolve_digicert_api_key(
         )
 
     path: str = vault_cfg["paths"]["digicert_api_key"]
-    key = _vc.read_secret_field(vault_cl, path, "value")
-    logger.debug("DigiCert API key resolved from Vault path '%s'.", path)
+    kv_version = int(vault_cfg.get("kv_version", 2))
+    key = _vc.read_secret_versioned(vault_cl, path, "value", kv_version=kv_version)
+    logger.debug("DigiCert API key resolved from Vault path '%s' (KV v%d).", path, kv_version)
     return key
 
 
@@ -106,6 +126,7 @@ def resolve_venafi_credentials(
         )
 
     path: str = vault_cfg["paths"]["venafi_credentials"]
-    data = _vc.read_all_secret_fields(vault_cl, path)
-    logger.debug("Venafi credentials resolved from Vault path '%s'.", path)
+    kv_version = int(vault_cfg.get("kv_version", 2))
+    data = _vc.read_all_secrets_versioned(vault_cl, path, kv_version=kv_version)
+    logger.debug("Venafi credentials resolved from Vault path '%s' (KV v%d).", path, kv_version)
     return data

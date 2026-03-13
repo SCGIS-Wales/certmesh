@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import time
+import uuid
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from typing import Any
 
 import hvac
 import requests
+from requests.adapters import HTTPAdapter
 from tenacity import (
     RetryError,
     retry,
@@ -127,12 +130,92 @@ class DigiCertCertificateDetail:
 # =============================================================================
 
 
+class _RequestIDAdapter(HTTPAdapter):
+    """HTTPAdapter that injects a unique ``X-Request-ID`` into every request.
+
+    Also logs every outbound request and response for operational visibility,
+    and attaches the request ID and endpoint URL to the response object so that
+    the error handler can include them in exception messages.
+    """
+
+    def send(  # type: ignore[override]
+        self,
+        request: requests.PreparedRequest,
+        *args: Any,
+        **kwargs: Any,
+    ) -> requests.Response:
+        rid = str(uuid.uuid4())
+        request.headers["X-Request-ID"] = rid  # type: ignore[index]
+        logger.debug(
+            "DigiCert >>> %s %s (request_id=%s)",
+            request.method,
+            request.url,
+            rid,
+        )
+        response = super().send(request, *args, **kwargs)
+        response.certmesh_request_id = rid  # type: ignore[attr-defined]
+        response.certmesh_endpoint = str(request.url)  # type: ignore[attr-defined]
+        logger.debug(
+            "DigiCert <<< HTTP %d (request_id=%s, url=%s, elapsed=%s)",
+            response.status_code,
+            rid,
+            request.url,
+            response.elapsed,
+        )
+        return response
+
+
+def _resolve_ca_bundle(digicert_cfg: JsonDict) -> str | bool:
+    """Determine the TLS CA bundle to use for outbound requests.
+
+    Resolution order (first non-empty wins):
+    1. ``digicert.ca_bundle`` config key (explicit path to a CA bundle file)
+    2. ``CM_CA_BUNDLE`` environment variable
+    3. ``REQUESTS_CA_BUNDLE`` — natively supported by *requests*
+    4. ``SSL_CERT_FILE`` — used by OpenSSL-based stacks
+    5. ``CURL_CA_BUNDLE`` — natively supported by *requests*
+    6. ``digicert.tls_verify`` config key (bool or path)
+
+    Returns ``True`` to use the default *certifi* CA bundle, ``False`` to
+    disable verification entirely, or a filesystem path string pointing to a
+    PEM CA bundle or directory.
+    """
+    # Explicit config path takes highest priority.
+    ca_bundle: str = digicert_cfg.get("ca_bundle", "")
+    if ca_bundle:
+        logger.debug("Using CA bundle from config (digicert.ca_bundle): %s", ca_bundle)
+        return ca_bundle
+
+    # certmesh-specific env var.
+    for env_var in ("CM_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
+        value = os.environ.get(env_var, "")
+        if value:
+            logger.debug("Using CA bundle from environment variable %s: %s", env_var, value)
+            return value
+
+    # Fall back to the tls_verify toggle (True / False / path string).
+    tls_verify = digicert_cfg.get("tls_verify", True)
+    if isinstance(tls_verify, str):
+        logger.debug("Using CA bundle from digicert.tls_verify (path): %s", tls_verify)
+        return tls_verify
+    return bool(tls_verify)
+
+
 def _build_session(
     digicert_cfg: JsonDict,
     vault_cfg: JsonDict,
     vault_cl: hvac.Client | None,
 ) -> requests.Session:
-    """Build an authenticated ``requests.Session`` for the DigiCert API."""
+    """Build an authenticated ``requests.Session`` for the DigiCert API.
+
+    The session is equipped with:
+    * ``X-DC-DEVKEY`` header for DigiCert authentication.
+    * ``_RequestIDAdapter`` for per-request UUID correlation, connection
+      pooling, and request/response logging.
+    * Configurable TLS verification and CA bundle resolution.
+    * Transparent proxy support via standard environment variables
+      (``HTTP_PROXY``, ``HTTPS_PROXY``, ``NO_PROXY``, ``ALL_PROXY``).
+    """
     api_key: str = creds.resolve_digicert_api_key(vault_cfg, vault_cl)
     session = requests.Session()
     session.headers.update(
@@ -143,11 +226,49 @@ def _build_session(
         }
     )
     session.certmesh_timeout = int(digicert_cfg.get("timeout_seconds", 30))  # type: ignore[attr-defined]
+
+    # ----- TLS verification / CA bundle -----
+    session.verify = _resolve_ca_bundle(digicert_cfg)
+
+    # ----- Forward proxy support -----
+    # requests.Session automatically reads HTTP_PROXY, HTTPS_PROXY,
+    # NO_PROXY, and ALL_PROXY from the environment.  We log the effective
+    # proxy configuration for operational visibility.
+    env_proxies = {
+        k: os.environ[k]
+        for k in (
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "no_proxy",
+            "all_proxy",
+        )
+        if k in os.environ
+    }
+    if env_proxies:
+        logger.info("Proxy environment detected: %s", env_proxies)
+
+    # ----- Connection pooling + request ID injection -----
+    pool_cfg: JsonDict = digicert_cfg.get("connection_pool", {})
+    adapter = _RequestIDAdapter(
+        pool_connections=int(pool_cfg.get("pool_connections", 10)),
+        pool_maxsize=int(pool_cfg.get("pool_maxsize", 20)),
+        max_retries=0,  # retries are handled by tenacity, not urllib3
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
     return session
 
 
 def _raise_for_digicert_error(resp: requests.Response) -> None:
     """Inspect a DigiCert HTTP response and raise the appropriate exception.
+
+    Every error message includes the request ID, endpoint URL, and a
+    remediation hint so that operators can quickly identify the root cause.
 
     * 401 / 403 -> ``DigiCertAuthenticationError``
     * 404       -> ``DigiCertOrderNotFoundError``
@@ -159,25 +280,51 @@ def _raise_for_digicert_error(resp: requests.Response) -> None:
 
     status = resp.status_code
     body = resp.text[:500]
+    request_id = getattr(resp, "certmesh_request_id", "unknown")
+    endpoint = getattr(resp, "certmesh_endpoint", "unknown")
 
     if status in (401, 403):
         raise DigiCertAuthenticationError(
-            f"DigiCert authentication failed (HTTP {status}). Verify your API key."
+            f"DigiCert authentication failed (HTTP {status}). "
+            f"endpoint={endpoint}, request_id={request_id}. "
+            "Remediation: verify your API key is valid and not expired — "
+            "check CM_DIGICERT_API_KEY or the Vault path in "
+            "vault.paths.digicert_api_key."
         )
 
     if status == 404:
-        raise DigiCertOrderNotFoundError(f"DigiCert resource not found (HTTP 404): {body}")
+        raise DigiCertOrderNotFoundError(
+            f"DigiCert resource not found (HTTP 404). "
+            f"endpoint={endpoint}, request_id={request_id}. "
+            f"Response: {body}. "
+            "Remediation: verify the certificate or order ID exists in "
+            "CertCentral and that the API key has access to it."
+        )
 
     if status == 429:
         retry_after = resp.headers.get("Retry-After", "")
         logger.warning(
-            "DigiCert rate limit hit (HTTP 429). Retry-After: '%s'.",
+            "DigiCert rate limit hit (HTTP 429). Retry-After='%s', request_id=%s, endpoint=%s.",
             retry_after,
+            request_id,
+            endpoint,
         )
-        raise DigiCertRateLimitError(f"DigiCert rate limit exceeded (HTTP 429): {body}")
+        raise DigiCertRateLimitError(
+            f"DigiCert rate limit exceeded (HTTP 429). "
+            f"endpoint={endpoint}, request_id={request_id}, "
+            f"Retry-After={retry_after or 'not set'}. "
+            "Remediation: reduce request frequency or wait for the "
+            "Retry-After period before retrying.",
+            retry_after=retry_after,
+        )
 
     raise DigiCertAPIError(
-        f"DigiCert API error (HTTP {status})",
+        f"DigiCert API error (HTTP {status}). "
+        f"endpoint={endpoint}, request_id={request_id}. "
+        f"Response: {body}. "
+        "Remediation: check the DigiCert status page "
+        "(https://status.digicert.com) or contact DigiCert support "
+        "with the request_id above.",
         status_code=status,
         body=body,
     )
@@ -304,13 +451,69 @@ def _cert_summary_from_dict(data: JsonDict) -> IssuedCertificateSummary:
 
 
 # =============================================================================
+# Response validation
+# =============================================================================
+
+
+def _validate_response_json(
+    data: JsonDict,
+    required_keys: set[str],
+    *,
+    context: str = "",
+    request_id: str = "",
+) -> None:
+    """Validate that expected keys are present in a JSON response.
+
+    Raises ``DigiCertAPIError`` with actionable detail when required keys
+    are missing, which typically indicates a malformed response or an API
+    version mismatch.
+    """
+    missing = required_keys - data.keys()
+    if missing:
+        raise DigiCertAPIError(
+            f"DigiCert API returned a malformed response: "
+            f"missing expected key(s) {sorted(missing)}. "
+            f"Received keys: {sorted(data.keys())}. "
+            f"Context: {context}. request_id={request_id}. "
+            "Remediation: this may indicate an API version mismatch or "
+            "a transient server issue. Retry the request, or contact "
+            "DigiCert support with the request_id above."
+        )
+
+
+# =============================================================================
 # Retry / circuit-breaker factory
 # =============================================================================
 
 
 def _make_retry_decorator(digicert_cfg: JsonDict) -> Any:
-    """Build a tenacity retry decorator from the ``digicert.retry`` config."""
+    """Build a tenacity retry decorator from the ``digicert.retry`` config.
+
+    The custom wait strategy honours the ``Retry-After`` header returned by
+    DigiCert on HTTP 429 responses.  If the header is absent or unparseable,
+    the decorator falls back to exponential backoff.
+    """
     retry_cfg: JsonDict = digicert_cfg.get("retry", {})
+
+    exp_wait = wait_exponential(
+        multiplier=float(retry_cfg.get("wait_multiplier", 1.5)),
+        min=float(retry_cfg.get("wait_min_seconds", 2)),
+        max=float(retry_cfg.get("wait_max_seconds", 60)),
+    )
+
+    def _retry_after_or_exponential(retry_state: Any) -> float:
+        """Honour Retry-After if present, otherwise exponential backoff."""
+        exc = retry_state.outcome.exception()
+        if isinstance(exc, DigiCertRateLimitError):
+            seconds = exc.retry_after_seconds()
+            if seconds is not None and seconds > 0:
+                logger.info(
+                    "Honouring Retry-After header: waiting %.1f s before retry.",
+                    seconds,
+                )
+                return seconds
+        return exp_wait(retry_state=retry_state)
+
     return retry(
         retry=retry_if_exception_type(
             (
@@ -320,11 +523,7 @@ def _make_retry_decorator(digicert_cfg: JsonDict) -> Any:
             )
         ),
         stop=stop_after_attempt(int(retry_cfg.get("max_attempts", 5))),
-        wait=wait_exponential(
-            multiplier=float(retry_cfg.get("wait_multiplier", 1.5)),
-            min=float(retry_cfg.get("wait_min_seconds", 2)),
-            max=float(retry_cfg.get("wait_max_seconds", 60)),
-        ),
+        wait=_retry_after_or_exponential,
         reraise=True,
     )
 

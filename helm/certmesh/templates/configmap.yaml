@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "certmesh.fullname" . }}-config
+  labels:
+    {{- include "certmesh.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    vault:
+      url: {{ .Values.vault.url | quote }}
+      auth_method: {{ .Values.vault.authMethod | quote }}
+      kv_version: {{ .Values.vault.kvVersion }}
+      tls_verify: {{ .Values.vault.tls.verify }}
+      aws_iam:
+        role: {{ .Values.vault.awsIam.role | quote }}
+        mount_point: {{ .Values.vault.awsIam.mountPoint | quote }}
+    digicert:
+      base_url: {{ .Values.digicert.baseUrl | quote }}
+      output:
+        destination: {{ .Values.digicert.output.destination | quote }}
+        base_path: {{ .Values.digicert.output.basePath | quote }}
+        vault_path_template: {{ .Values.digicert.output.vaultPathTemplate | quote }}
+        sm_secret_name_template: {{ .Values.digicert.output.smSecretNameTemplate | quote }}
+        sm_region: {{ .Values.digicert.output.smRegion | quote }}
+    acm:
+      region: {{ .Values.acm.region | quote }}
+    logging:
+      level: {{ .Values.api.logLevel | upper | quote }}

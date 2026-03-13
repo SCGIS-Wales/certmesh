@@ -311,7 +311,121 @@ def write_secret(client: hvac.Client, path: str, data: SecretData) -> None:
     except HvacVaultError as exc:
         raise VaultWriteError(f"Failed to write to Vault path '{path}': {exc}") from exc
 
-    logger.info("Vault: wrote %d field(s) to path '%s'.", len(data), path)
+    logger.info("Vault: wrote %d field(s) to path '%s' (KV v2).", len(data), path)
+
+
+# =============================================================================
+# KV v1 read helpers
+# =============================================================================
+
+
+def read_all_secret_fields_v1(client: hvac.Client, path: str) -> SecretData:
+    """Read all key-value fields from a Vault KV v1 secret.
+
+    KV v1 secrets are single-wrapped: ``response["data"]`` contains the
+    secret data directly, unlike KV v2 which has ``response["data"]["data"]``.
+    """
+    mount_point, sub_path = _split_path(path)
+
+    try:
+        response: JsonDict = client.secrets.kv.v1.read_secret(
+            path=sub_path,
+            mount_point=mount_point,
+        )
+    except InvalidPath as exc:
+        raise VaultSecretNotFoundError(
+            f"Vault secret not found at path '{path}' (KV v1)."
+        ) from exc
+    except (Forbidden, Unauthorized) as exc:
+        raise VaultAuthenticationError(
+            f"Access denied reading Vault path '{path}' (KV v1): {exc}"
+        ) from exc
+    except HvacVaultError as exc:
+        raise VaultSecretNotFoundError(
+            f"Failed to read Vault secret at '{path}' (KV v1): {exc}"
+        ) from exc
+
+    return response.get("data", {})
+
+
+def read_secret_field_v1(client: hvac.Client, path: str, field: str) -> str:
+    """Read a single field from a Vault KV v1 secret."""
+    data = read_all_secret_fields_v1(client, path)
+    if field not in data:
+        raise VaultSecretNotFoundError(
+            f"Field '{field}' not found in Vault secret at '{path}' (KV v1). "
+            f"Available fields: {sorted(data.keys())}"
+        )
+    return data[field]
+
+
+# =============================================================================
+# KV v1 write helper
+# =============================================================================
+
+
+def write_secret_v1(client: hvac.Client, path: str, data: SecretData) -> None:
+    """Write or update key-value data in a Vault KV v1 secret path."""
+    mount_point, sub_path = _split_path(path)
+
+    try:
+        client.secrets.kv.v1.create_or_update_secret(
+            path=sub_path,
+            secret=data,
+            mount_point=mount_point,
+        )
+    except (Forbidden, Unauthorized) as exc:
+        raise VaultAuthenticationError(
+            f"Access denied writing to Vault path '{path}' (KV v1): {exc}"
+        ) from exc
+    except HvacVaultError as exc:
+        raise VaultWriteError(f"Failed to write to Vault path '{path}' (KV v1): {exc}") from exc
+
+    logger.info("Vault: wrote %d field(s) to path '%s' (KV v1).", len(data), path)
+
+
+# =============================================================================
+# Version-aware dispatch wrappers
+# =============================================================================
+
+
+def read_secret_versioned(
+    client: hvac.Client,
+    path: str,
+    field: str,
+    *,
+    kv_version: int = 2,
+) -> str:
+    """Read a single field, dispatching to KV v1 or v2 as configured."""
+    if kv_version == 1:
+        return read_secret_field_v1(client, path, field)
+    return read_secret_field(client, path, field)
+
+
+def read_all_secrets_versioned(
+    client: hvac.Client,
+    path: str,
+    *,
+    kv_version: int = 2,
+) -> SecretData:
+    """Read all fields, dispatching to KV v1 or v2 as configured."""
+    if kv_version == 1:
+        return read_all_secret_fields_v1(client, path)
+    return read_all_secret_fields(client, path)
+
+
+def write_secret_versioned(
+    client: hvac.Client,
+    path: str,
+    data: SecretData,
+    *,
+    kv_version: int = 2,
+) -> None:
+    """Write secret data, dispatching to KV v1 or v2 as configured."""
+    if kv_version == 1:
+        write_secret_v1(client, path, data)
+    else:
+        write_secret(client, path, data)
 
 
 # =============================================================================
