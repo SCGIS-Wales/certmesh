@@ -22,7 +22,7 @@ pip install certmesh
 From source:
 
 ```bash
-git clone https://github.com/api-py/certmesh.git
+git clone https://github.com/SCGIS-Wales/certmesh.git
 cd certmesh
 pip install -e ".[dev]"
 ```
@@ -175,7 +175,7 @@ Configured per-provider via `output.destination` (`filesystem`, `vault`, or `bot
 
 ```bash
 # Clone and install
-git clone https://github.com/api-py/certmesh.git
+git clone https://github.com/SCGIS-Wales/certmesh.git
 cd certmesh
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
