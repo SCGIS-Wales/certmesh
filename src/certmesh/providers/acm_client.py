@@ -27,6 +27,35 @@ References
 ----------
 * ACM API:     https://docs.aws.amazon.com/acm/latest/APIReference/
 * ACM-PCA API: https://docs.aws.amazon.com/privateca/latest/APIReference/
+
+Protocol
+--------
+All ACM API calls are HTTP POST to ``https://acm.{region}.amazonaws.com/``
+with ``Content-Type: application/x-amz-json-1.1``.  Operations are
+specified via the ``X-Amz-Target`` header using
+``CertificateManager.{OperationName}``.
+
+Authentication uses SigV4 (``aws4_request``); service name for signing is
+``acm``.  boto3 handles signing automatically.
+
+Error handling
+--------------
+All ACM errors surface as HTTP 400 with ``botocore.exceptions.ClientError``.
+Retryable error codes: ``ThrottlingException``, ``RequestInProgressException``,
+``ConflictException``.  Non-retryable: ``ResourceNotFoundException``,
+``InvalidArnException``, ``ResourceInUseException``, ``InvalidStateException``.
+
+Certificate validity
+--------------------
+From 15 March 2026 (SC-081 / CA/Browser Forum), maximum publicly trusted
+TLS certificate validity is 398 days.  ACM-issued certificates now have a
+maximum validity of 395 days.
+
+ExportCertificate
+-----------------
+As of June 17, 2025, ACM public certificates can also be exported.
+Certificates created before that date cannot be exported.
+Private CA certificates have always been exportable.
 """
 
 from __future__ import annotations
@@ -205,6 +234,8 @@ def request_certificate(
 ) -> str:
     """Request a new public TLS certificate via ACM.
 
+    Spec reference: ``CertificateManager.RequestCertificate``
+
     Args:
         acm_cfg: The ``acm`` section of the application config.
         domain_name: Primary fully-qualified domain name for the certificate.
@@ -284,6 +315,8 @@ def describe_certificate(
 ) -> ACMCertificateDetail:
     """Get full details of a certificate by ARN.
 
+    Spec reference: ``CertificateManager.DescribeCertificate``
+
     Args:
         acm_cfg: The ``acm`` section of the application config.
         certificate_arn: ARN of the certificate to describe.
@@ -342,6 +375,8 @@ def list_certificates(
     max_items: int | None = None,
 ) -> list[ACMCertificateSummary]:
     """List certificates with optional status filter.
+
+    Spec reference: ``CertificateManager.ListCertificates``
 
     Automatically handles pagination to return all matching certificates
     up to *max_items* (or all if *max_items* is ``None``).
@@ -407,13 +442,18 @@ def export_certificate(
 ) -> CertificateBundle:
     """Export a certificate and its private key from ACM.
 
+    Spec reference: ``CertificateManager.ExportCertificate``
+
     ACM encrypts the private key with the provided *passphrase* before
     returning it.  This function decrypts the key and assembles a
     ``CertificateBundle``.
 
     Note:
-        Only certificates with exportable private keys (e.g. those
-        imported into ACM or issued by ACM Private CA) can be exported.
+        As of June 17, 2025, ACM public certificates can also be
+        exported.  Public certificates created before that date cannot
+        be exported.  Private CA certificates have always been
+        exportable.  The passphrase must be 4-128 ASCII characters
+        (excluding ``#``, ``$``, ``%``).
 
     Args:
         acm_cfg: The ``acm`` section of the application config.
@@ -490,6 +530,10 @@ def delete_certificate(
 ) -> None:
     """Delete a certificate from ACM.
 
+    Spec reference: ``CertificateManager.DeleteCertificate``
+    The certificate must not be associated with any AWS resource
+    (``ResourceInUseException``).
+
     Args:
         acm_cfg: The ``acm`` section of the application config.
         certificate_arn: ARN of the certificate to delete.
@@ -521,8 +565,12 @@ def renew_certificate(
 ) -> None:
     """Trigger renewal of an eligible managed certificate.
 
+    Spec reference: ``CertificateManager.RenewCertificate``
+
     Only certificates that are eligible for managed renewal (i.e. those
     originally requested through ACM) can be renewed via this API.
+    ACM begins auto-renewal 60 days before expiry for DNS-validated
+    certificates associated with at least one AWS resource.
 
     Args:
         acm_cfg: The ``acm`` section of the application config.
@@ -555,8 +603,13 @@ def get_validation_records(
 ) -> list[ACMValidationRecord]:
     """Extract DNS/email validation records from a pending certificate.
 
+    Spec reference: ``CertificateManager.DescribeCertificate`` ->
+    ``DomainValidationOptions[].ResourceRecord``
+
     Useful for programmatically creating Route 53 records or notifying
-    administrators of the email validation addresses.
+    administrators of the email validation addresses.  For DNS
+    validation, the CNAME record must remain present for the lifetime
+    of the certificate to enable managed automatic renewal.
 
     Args:
         acm_cfg: The ``acm`` section of the application config.

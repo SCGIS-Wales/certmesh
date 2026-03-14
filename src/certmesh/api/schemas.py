@@ -108,8 +108,28 @@ class DigiCertSearchRequest(BaseModel):
 
 
 # =============================================================================
-# Venafi
+# Venafi TPP
 # =============================================================================
+
+
+class VenafiSearchRequest(BaseModel):
+    """Search filters for Venafi certificates.
+
+    Filter names map to Venafi TPP ``GET /vedsdk/Certificates/`` query
+    parameters: ``CN``, ``SAN-DNS``, ``Thumbprint``, ``Serial``, etc.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    common_name: str = ""
+    san_dns: str = ""
+    thumbprint: str = ""
+    serial_number: str = ""
+    issuer: str = ""
+    key_size: int | None = None
+    stage: int | None = None
+    limit: int = 100
+    offset: int = 0
 
 
 class VenafiRenewRequest(BaseModel):
@@ -119,9 +139,58 @@ class VenafiRenewRequest(BaseModel):
 
 
 class VenafiCertificateResponse(BaseModel):
+    """Lightweight certificate summary returned by list/search."""
+
     guid: str
+    dn: str = ""
+    name: str = ""
     common_name: str = ""
     status: str = ""
+    created_on: str = ""
+    approx_not_after: str = ""
+
+
+class VenafiCertificateDetailResponse(BaseModel):
+    """Detailed certificate info returned by the describe endpoint."""
+
+    guid: str
+    dn: str = ""
+    name: str = ""
+    serial_number: str = ""
+    thumbprint: str = ""
+    valid_from: str = ""
+    valid_to: str = ""
+    issuer: str = ""
+    subject: str = ""
+    key_algorithm: str = ""
+    key_size: int = 0
+    san_dns_names: list[str] = []
+    stage: int = 0
+    status: str = ""
+    in_error: bool = False
+
+
+class VenafiRenewResponse(BaseModel):
+    """Response for certificate renewal."""
+
+    guid: str
+    common_name: str = ""
+    serial_number: str = ""
+    not_after: str = ""
+
+
+class VenafiRevokeRequest(BaseModel):
+    """Request body for revoking a Venafi certificate.
+
+    Spec reference: ``POST /vedsdk/Certificates/Revoke``
+    Reason codes follow RFC 5280 CRLReason (0-5).
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    reason: int = 0
+    comments: str = ""
+    disable: bool = False
 
 
 # =============================================================================
@@ -159,6 +228,14 @@ class VaultPKICertificateResponse(BaseModel):
 
 
 class ACMRequestCertRequest(BaseModel):
+    """Request body for requesting a new ACM certificate.
+
+    Spec reference: ``CertificateManager.RequestCertificate``
+    Valid key algorithms: ``RSA_2048``, ``RSA_3072``, ``RSA_4096``,
+    ``EC_prime256v1``, ``EC_secp384r1``, ``EC_secp521r1``.
+    Valid validation methods: ``DNS`` (recommended) or ``EMAIL``.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     domain_name: str
@@ -166,27 +243,88 @@ class ACMRequestCertRequest(BaseModel):
     validation_method: str = "DNS"
     key_algorithm: str = "RSA_2048"
     idempotency_token: str = ""
+    tags: list[dict[str, str]] = []
 
 
 class ACMCertificateResponse(BaseModel):
+    """Certificate summary returned by request and describe operations."""
+
     certificate_arn: str
     domain_name: str = ""
     status: str = ""
     not_after: str = ""
+    key_algorithm: str = ""
+    type: str = ""
+
+
+class ACMCertificateDetailResponse(BaseModel):
+    """Full certificate detail returned by the describe endpoint.
+
+    Maps to the ``CertificateDetail`` structure from
+    ``CertificateManager.DescribeCertificate``.
+    """
+
+    certificate_arn: str
+    domain_name: str = ""
+    subject_alternative_names: list[str] = []
+    status: str = ""
+    type: str = ""
+    key_algorithm: str = ""
+    serial: str = ""
+    issuer: str = ""
+    not_before: str = ""
+    not_after: str = ""
+    created_at: str = ""
+    renewal_eligibility: str = ""
+    in_use_by: list[str] = []
+    failure_reason: str = ""
+
+
+class ACMExportRequest(BaseModel):
+    """Request body for exporting a certificate from ACM.
+
+    Spec reference: ``CertificateManager.ExportCertificate``
+    The passphrase encrypts the exported private key (PKCS#8).
+    Must be 4-128 ASCII characters (excluding ``#``, ``$``, ``%``).
+
+    Note: As of June 17, 2025 ACM public certificates can also be exported.
+    Certificates created before that date cannot be exported.
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    passphrase: str
 
 
 class ACMExportResponse(BaseModel):
+    """Response for certificate export operations."""
+
     certificate_arn: str
     written_to: dict[str, str] = {}
 
 
 class ACMValidationRecord(BaseModel):
-    name: str
-    type: str
-    value: str
+    """A DNS or email validation record for a pending ACM certificate.
+
+    Maps to ``DomainValidationOptions[].ResourceRecord`` from
+    ``CertificateManager.DescribeCertificate``.
+    """
+
+    domain_name: str = ""
+    validation_method: str = ""
+    validation_status: str = ""
+    resource_record_name: str = ""
+    resource_record_type: str = ""
+    resource_record_value: str = ""
 
 
 class ACMRoute53SyncRequest(BaseModel):
+    """Request body for syncing ACM DNS validation records to Route53.
+
+    Creates CNAME records in the specified Route53 hosted zone for
+    ACM certificate DNS validation.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     certificate_arn: str
@@ -194,6 +332,8 @@ class ACMRoute53SyncRequest(BaseModel):
 
 
 class ACMRoute53SyncResponse(BaseModel):
+    """Response for Route53 DNS validation sync."""
+
     synced_records: int = 0
     message: str = ""
 

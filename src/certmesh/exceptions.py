@@ -153,7 +153,14 @@ class VenafiAuthenticationError(VenafiError):
 
 
 class VenafiLDAPAuthError(VenafiError):
-    """Raised when Venafi TPP LDAP/legacy authentication fails."""
+    """Raised when Venafi TPP LDAP/legacy authentication fails.
+
+    .. deprecated:: TPP 22.3
+       The ``/vedsdk/authorize`` endpoint was removed in TPP 22.3.
+       This exception is retained for pre-22.3 deployments using legacy
+       API-key authentication.  TPP 22.3+ returns HTTP 401 with
+       "API keys are deprecated".
+    """
 
 
 class VenafiAPIError(VenafiError):
