@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+
+## [3.0.6] - 2026-03-14
+
+### Added
+- **JWT → API key exchange**: Exchange valid JWT for short-lived API key (default 15min, max 8h) via `POST /api/v1/auth/token`. Expiry signaling via `X-CertMesh-Key-Expiring` header prompts programmatic clients to refresh ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **Rate limiting**: Configurable throttling returning HTTP 429 with `Retry-After` header. Default 1000 req/min (high — protection not restriction) ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **TLS 1.3 + 1.2 server config**: Configurable cipher suites with Mozilla Intermediate defaults, HTTP keep-alive (75s), session ticket control ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **GZip compression**: Enabled by default for responses ≥ 500 bytes, configurable level ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **RFC 7807 error responses**: All errors now return consistent JSON with `error`, `status`, `detail`, `request_id` fields and correct HTTP status codes (21 exception types mapped) ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **Auth audit logging**: All authentication/authorization failures logged with structured context (subject, scopes, issuer, client IP) ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **Capacity/performance integration test**: Rate limiting 429 verification, concurrent load testing, API key store capacity, response time baseline ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+- **CI fix**: Set `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` to resolve Node.js 20 deprecation warning ([#6](https://github.com/SCGIS-Wales/certmesh/pull/6))
+
 ## [3.0.5] - 2026-03-14
 
 ### Fixed
@@ -33,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.5...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...HEAD
+[3.0.6]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.5...v3.0.6
 [3.0.5]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.0...v3.0.5
 [3.0.0]: https://github.com/SCGIS-Wales/certmesh/releases/tag/v3.0.0
