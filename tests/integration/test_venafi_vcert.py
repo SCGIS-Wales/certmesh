@@ -23,6 +23,9 @@ try:
 except ImportError:
     HAS_VCERT = False
 
+# VCert fake connector uses a default zone
+FAKE_ZONE = "Default"
+
 
 @pytest.fixture
 def fake_connector():
@@ -40,20 +43,20 @@ class TestVCertFakeConnector:
     """Test certificate operations via VCert fake connector."""
 
     def test_authenticate(self, fake_connector):
-        """Verify fake connector authenticates successfully."""
+        """Verify fake connector is created successfully."""
         assert fake_connector is not None
 
     def test_request_certificate(self, fake_connector):
         """Request a certificate via the fake connector."""
         request = CertificateRequest(common_name="test.example.com")
         request.san_dns = ["alt1.example.com", "alt2.example.com"]
-        fake_connector.request_cert(request)
+        fake_connector.request_cert(request, FAKE_ZONE)
         assert request.id is not None
 
     def test_retrieve_certificate(self, fake_connector):
         """Request and retrieve a certificate."""
         request = CertificateRequest(common_name="retrieve-test.example.com")
-        fake_connector.request_cert(request)
+        fake_connector.request_cert(request, FAKE_ZONE)
         cert = fake_connector.retrieve_cert(request)
         assert cert.cert is not None
         assert "BEGIN CERTIFICATE" in cert.cert
@@ -63,9 +66,8 @@ class TestVCertFakeConnector:
         request = CertificateRequest(
             common_name="keytype-test.example.com",
             key_type=KeyType.RSA,
-            key_length=2048,
         )
-        fake_connector.request_cert(request)
+        fake_connector.request_cert(request, FAKE_ZONE)
         cert = fake_connector.retrieve_cert(request)
         assert cert.cert is not None
 
@@ -73,6 +75,6 @@ class TestVCertFakeConnector:
         """Request a certificate with a custom CSR."""
         request = CertificateRequest(common_name="csr-test.example.com")
         request.csr_origin = "local"
-        fake_connector.request_cert(request)
+        fake_connector.request_cert(request, FAKE_ZONE)
         cert = fake_connector.retrieve_cert(request)
         assert cert.cert is not None
