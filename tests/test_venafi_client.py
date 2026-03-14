@@ -289,6 +289,27 @@ class TestAuthenticateOAuth:
         assert payload["client_id"] == "certapi"
         assert payload["scope"] == "certificate:manage"
 
+    def test_oauth_payload_does_not_include_grant_type(
+        self,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+    ) -> None:
+        """Verify grant_type is NOT sent — VedAuth infers it from endpoint path."""
+        session.post.return_value = _mock_response(
+            json_data={"access_token": "tok"},
+        )
+        _authenticate_oauth(
+            session,
+            BASE_URL,
+            "user",
+            "pass",
+            venafi_cfg_oauth,
+            timeout=10,
+        )
+        call_kwargs = session.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert "grant_type" not in payload
+
 
 # ============================================================================
 # Tests: _authenticate_ldap
@@ -713,7 +734,8 @@ class TestRevokeCertificate:
         )
         call_kwargs = session.post.call_args
         payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
-        assert payload["Disabled"] is True
+        # Spec field name is "Disable" (not "Disabled")
+        assert payload["Disable"] is True
 
     def test_missing_identifier_raises(
         self,
@@ -877,6 +899,54 @@ class TestRequestCertificate:
         # assemble_bundle should receive the leaf and client-generated key
         assemble_call = mock_assemble.call_args
         assert assemble_call.kwargs["private_key_pem"] == b"KEY-PEM"
+
+    @patch("certmesh.providers.venafi_client.cu.assemble_bundle")
+    @patch("certmesh.providers.venafi_client.cu.parse_pkcs12_bundle")
+    @patch("certmesh.providers.venafi_client._download_pkcs12")
+    @patch("certmesh.providers.venafi_client._poll_certificate_ready")
+    @patch("certmesh.providers.venafi_client._approve_workflow_tickets")
+    @patch("certmesh.providers.venafi_client._resolve_pkcs12_passphrase", return_value="pass")
+    def test_subject_alt_names_use_dns_typename(
+        self,
+        _mock_passphrase: MagicMock,
+        _mock_approve: MagicMock,
+        _mock_poll: MagicMock,
+        _mock_download: MagicMock,
+        mock_parse: MagicMock,
+        mock_assemble: MagicMock,
+        session: MagicMock,
+        venafi_cfg_oauth: JsonDict,
+        vault_cfg: JsonDict,
+    ) -> None:
+        """Verify SubjectAltNames uses TypeName 'DNS' (not numeric '2') per spec."""
+        session.post.return_value = _mock_response(
+            json_data={
+                "CertificateDN": "\\VED\\Policy\\Certs\\san-test",
+                "Guid": "san-guid",
+            },
+        )
+        _mock_download.return_value = b"p12"
+        mock_parse.return_value = (b"c", b"k", b"ch")
+        mock_assemble.return_value = MagicMock(spec=CertificateBundle)
+
+        request_certificate(
+            session,
+            venafi_cfg_oauth,
+            vault_cfg,
+            None,
+            policy_dn="\\VED\\Policy\\Certs",
+            subject=self._subject,
+            use_csr=False,
+        )
+
+        # The first POST call is the certificate request
+        request_call = session.post.call_args
+        payload = request_call.kwargs.get("json") or request_call[1].get("json")
+        assert "SubjectAltNames" in payload
+        for san in payload["SubjectAltNames"]:
+            assert san["TypeName"] == "DNS", (
+                f"Expected TypeName 'DNS' per spec, got '{san['TypeName']}'"
+            )
 
     def test_request_api_error_on_submit(
         self,
@@ -1125,7 +1195,7 @@ class TestApproveWorkflowTickets:
         from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         enumerate_resp = _mock_response(
-            json_data={"Tickets": [{"Id": 42}]},
+            json_data={"Tickets": [{"GUID": "abc-123"}]},
         )
         approve_resp = _mock_response(json_data={})
 
@@ -1140,6 +1210,18 @@ class TestApproveWorkflowTickets:
         )
         assert session.post.call_count == 2
 
+        # Verify the approve call uses the spec-compliant endpoint and payload
+        approve_call = session.post.call_args_list[1]
+        approve_url = (
+            approve_call.args[0] if approve_call.args else approve_call.kwargs.get("url", "")
+        )
+        assert "workflow/ticket/updatestatus" in approve_url
+
+        approve_payload = approve_call.kwargs.get("json") or approve_call[1].get("json")
+        assert approve_payload["GUID"] == "abc-123"
+        assert approve_payload["Status"] == "Approved"
+        assert "Explanation" in approve_payload
+
     def test_approve_failure_raises(
         self,
         session: MagicMock,
@@ -1148,7 +1230,7 @@ class TestApproveWorkflowTickets:
         from certmesh.providers.venafi_client import _approve_workflow_tickets
 
         enumerate_resp = _mock_response(
-            json_data={"Tickets": [{"Id": 7}]},
+            json_data={"Tickets": [{"GUID": "ticket-guid-7"}]},
         )
         approve_resp = _mock_response(
             status_code=400,
@@ -1158,7 +1240,7 @@ class TestApproveWorkflowTickets:
 
         session.post.side_effect = [enumerate_resp, approve_resp]
 
-        with pytest.raises(VenafiWorkflowApprovalError, match="ticket 7"):
+        with pytest.raises(VenafiWorkflowApprovalError, match="ticket-guid-7"):
             _approve_workflow_tickets(
                 session,
                 BASE_URL,

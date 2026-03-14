@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -192,12 +192,39 @@ class TestDigiCertRoutes:
 
 
 class TestVenafiRoutes:
-    def test_list_certificates(self, client: TestClient) -> None:
+    @patch("certmesh.providers.venafi_client.list_certificates", return_value=[])
+    @patch("certmesh.providers.venafi_client.authenticate")
+    def test_list_certificates(
+        self, mock_auth: MagicMock, mock_list: MagicMock, client: TestClient
+    ) -> None:
+        mock_auth.return_value = MagicMock()
         resp = client.get("/api/v1/venafi/certificates")
         assert resp.status_code == 200
-        assert resp.json() == []
+        data = resp.json()
+        assert data["items"] == []
 
-    def test_get_certificate(self, client: TestClient) -> None:
+    @patch("certmesh.providers.venafi_client.describe_certificate")
+    @patch("certmesh.providers.venafi_client.authenticate")
+    def test_get_certificate(
+        self, mock_auth: MagicMock, mock_describe: MagicMock, client: TestClient
+    ) -> None:
+        from certmesh.providers.venafi_client import VenafiCertificateDetail
+
+        mock_auth.return_value = MagicMock()
+        mock_describe.return_value = VenafiCertificateDetail(
+            guid="test-guid-123",
+            dn="\\VED\\Policy\\cert",
+            name="test",
+            created_on="2025-01-01",
+            serial_number="AA",
+            thumbprint="BB",
+            valid_from="2025-01-01",
+            valid_to="2026-01-01",
+            issuer="CN=CA",
+            subject="CN=test",
+            key_algorithm="RSA",
+            key_size=2048,
+        )
         resp = client.get("/api/v1/venafi/certificates/test-guid-123")
         assert resp.status_code == 200
         assert resp.json()["guid"] == "test-guid-123"
@@ -236,7 +263,12 @@ class TestOAuth2Disabled:
         resp = client.get("/healthz")
         assert resp.status_code == 200
 
-    def test_venafi_accessible_without_token(self, client: TestClient) -> None:
+    @patch("certmesh.providers.venafi_client.list_certificates", return_value=[])
+    @patch("certmesh.providers.venafi_client.authenticate")
+    def test_venafi_accessible_without_token(
+        self, mock_auth: MagicMock, mock_list: MagicMock, client: TestClient
+    ) -> None:
+        mock_auth.return_value = MagicMock()
         resp = client.get("/api/v1/venafi/certificates")
         assert resp.status_code == 200
 

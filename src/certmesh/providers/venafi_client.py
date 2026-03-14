@@ -2,26 +2,52 @@
 certmesh.venafi_client
 =======================
 
-Venafi Trust Protection Platform (TPP) API client for the full certificate
-lifecycle: authenticate, renew, list, search, describe, revoke, and request.
+Venafi Trust Protection Platform (TPP) / CyberArk Trust Protection Foundation
+client for the full certificate lifecycle: authenticate, renew, list, search,
+describe, revoke, and request.
 
-Two authentication paths are supported:
+Supported API versions
+~~~~~~~~~~~~~~~~~~~~~~
+* **v23 (SDK 23.x)** and **v25.3 (SDK 25.3)** — certificate lifecycle
+  endpoints on ``/vedsdk/`` are structurally identical across both versions.
+  v25.3 adds ``SidExtensionIdentity`` and ``SidExtensionValue`` fields to
+  certificate requests.
 
-* **OAuth2 password-grant** (``vedauth/authorize/oauth``) -- returns a Bearer
-  token used in ``Authorization`` headers.
-* **Legacy LDAP / VEdSDK** (``vedsdk/authorize``) -- returns an API key used in
-  ``X-Venafi-Api-Key`` headers.
+Authentication
+~~~~~~~~~~~~~~
+* **OAuth 2.0 password-grant** (``/vedauth/authorize/oauth``) — returns a
+  Bearer token used in ``Authorization`` headers.  This is the **only**
+  authentication method on TPP 22.3+.
+* **Legacy LDAP / VEdSDK** (``/vedsdk/authorize``) — returns an API key
+  placed in ``X-Venafi-Api-Key`` headers.  **Deprecated in TPP 20.1 and
+  completely removed in TPP 22.3** (returns HTTP 401: "API keys are
+  deprecated").  Retained here for pre-22.3 deployments.
 
-Two download modes are supported:
-
-1. **Server-side key** -- Venafi holds the private key; the client retrieves a
+Download modes
+~~~~~~~~~~~~~~
+1. **Server-side key** — Venafi holds the private key; the client retrieves a
    PKCS#12 bundle and extracts the key locally.
-2. **Client-side CSR** -- The client generates a key pair, builds a CSR, submits
-   it to Venafi for signing, and downloads the signed certificate.
+2. **Client-side CSR** — The client generates a key pair and CSR, submits the
+   CSR to Venafi for signing, and downloads only the signed certificate.
+
+Rate limits and concurrency
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+TPP does **not** enforce traditional per-request rate limits (no HTTP 429
+responses).  It uses a configurable **session pool model**.  Always reuse
+OAuth tokens across requests until expiration.
+
+Field name case sensitivity
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+API method paths are case-insensitive, but request body field names are
+**case-sensitive** (``"ObjectDN"`` not ``"objectdn"``).
 
 References
 ----------
-* Venafi TPP API:  https://docs.venafi.com/Docs/current/TopNav/Content/SDK/WebSDK/API_reference.htm
+* Venafi TPP Web SDK:
+  https://docs.venafi.com/Docs/current/TopNav/Content/SDK/WebSDK/API_reference.htm
+* Auth SDK (OAuth 2.0):
+  https://docs.venafi.com/Docs/current/TopNav/Content/SDK/AuthSDK/r-SDKa-AUTH.php
+* Swagger explorer:  ``https://{tpp_host}/VEDSDK/swagger.aspx``
 """
 
 from __future__ import annotations
@@ -65,6 +91,14 @@ _CONTENT_TYPE_JSON = "application/json"
 
 # ---------------------------------------------------------------------------
 # Revocation reason codes (RFC 5280 CRLReason)
+#
+# Spec reference: POST /vedsdk/Certificates/Revoke — ``Reason`` field.
+#   0 = None (Unspecified)
+#   1 = User key compromised (KeyCompromise)
+#   2 = CA key compromised (CACompromise)
+#   3 = User changed affiliation (AffiliationChanged)
+#   4 = Certificate superseded (Superseded)
+#   5 = Original use no longer valid (CessationOfOperation)
 # ---------------------------------------------------------------------------
 
 REVOCATION_REASONS: dict[str, int] = {
@@ -163,8 +197,20 @@ def _authenticate_oauth(
 ) -> None:
     """Authenticate via the Venafi OAuth2 password-grant endpoint.
 
+    Spec reference: ``POST /vedauth/authorize/oauth``
+
+    Required request body fields per spec: ``client_id``, ``username``,
+    ``password``, ``scope``.  Optional: ``state`` (CSRF prevention).
+
     On success the session is updated with an ``Authorization: Bearer <token>``
-    header for all subsequent calls.
+    header for all subsequent calls.  The response also includes a
+    ``refresh_token`` for future token renewal via
+    ``POST /vedauth/authorize/token``.
+
+    .. note::
+       The ``grant_type`` field is **not** part of the Venafi VedAuth spec
+       and has been intentionally omitted.  VedAuth infers the grant type
+       from the endpoint path (``/authorize/oauth`` = password grant).
     """
     client_id: str = venafi_cfg.get("oauth_client_id", "certapi")
     scope: str = venafi_cfg.get("oauth_scope", "certificate:manage")
@@ -175,7 +221,6 @@ def _authenticate_oauth(
         "username": username,
         "password": password,
         "scope": scope,
-        "grant_type": "password",
     }
 
     logger.debug("Venafi OAuth: requesting token.", extra={"url": url, "client_id": client_id})
@@ -214,6 +259,14 @@ def _authenticate_ldap(
 ) -> None:
     """Authenticate via the Venafi legacy VEdSDK / LDAP endpoint.
 
+    Spec reference: ``POST /vedsdk/authorize/`` (pre-22.3 only)
+
+    .. deprecated:: TPP 22.3
+       The ``/vedsdk/authorize/`` endpoint was deprecated in TPP 20.1 and
+       **completely removed in TPP 22.3** (returns HTTP 401: "API keys are
+       deprecated").  This method is retained for pre-22.3 deployments.
+       For TPP 22.3+ use OAuth 2.0 via ``/vedauth/authorize/oauth``.
+
     On success the session is updated with an ``X-Venafi-Api-Key`` header for
     all subsequent calls.
     """
@@ -224,7 +277,12 @@ def _authenticate_ldap(
         "Password": password,
     }
 
-    logger.debug("Venafi LDAP: requesting API key.", extra={"url": url})
+    logger.warning(
+        "Venafi: using legacy LDAP/API-key authentication (/vedsdk/authorize). "
+        "This endpoint was removed in TPP 22.3. Consider migrating to OAuth 2.0 "
+        "(/vedauth/authorize/oauth) for TPP 22.3+ compatibility.",
+        extra={"url": url},
+    )
 
     resp = session.post(url, json=payload, timeout=timeout)
 
@@ -258,7 +316,12 @@ def authenticate(
     2. Vault secret at the configured path.
 
     The auth method (``oauth`` or ``ldap``) is determined by
-    ``venafi_cfg["auth_method"]``.
+    ``venafi_cfg["auth_method"]``:
+
+    * ``"oauth"`` — Uses ``POST /vedauth/authorize/oauth`` (TPP 20.1+,
+      required for TPP 22.3+).  Returns a Bearer token.
+    * ``"ldap"`` — Uses ``POST /vedsdk/authorize`` (pre-22.3 only).
+      Returns an API key.  **Removed in TPP 22.3.**
     """
     session = _build_session(venafi_cfg)
     base = _base_url(venafi_cfg)
@@ -271,6 +334,8 @@ def authenticate(
     auth_method: str = venafi_cfg.get("auth_method", "oauth")
 
     if auth_method == "oauth":
+        # OAuth 2.0 via /vedauth/authorize/oauth — supported on TPP 20.1+,
+        # required on TPP 22.3+ (v23, v25.3).
         _authenticate_oauth(
             session,
             base,
@@ -280,6 +345,8 @@ def authenticate(
             timeout=timeout,
         )
     elif auth_method == "ldap":
+        # Legacy API-key via /vedsdk/authorize — supported on TPP < 22.3
+        # only.  Deprecated in TPP 20.1, removed in TPP 22.3.
         _authenticate_ldap(
             session,
             base,
@@ -289,7 +356,9 @@ def authenticate(
         )
     else:
         raise ConfigurationError(
-            f"Unsupported venafi.auth_method '{auth_method}'. Supported: 'oauth', 'ldap'."
+            f"Unsupported venafi.auth_method '{auth_method}'. "
+            f"Supported: 'oauth' (TPP 20.1+, required 22.3+), "
+            f"'ldap' (TPP < 22.3 only)."
         )
 
     return session
@@ -331,7 +400,21 @@ def _build_circuit_breaker(venafi_cfg: JsonDict):
 
 
 def _raise_for_status(resp: requests.Response, context: str) -> None:
-    """Raise an appropriate Venafi exception for non-2xx responses."""
+    """Raise an appropriate Venafi exception for non-2xx responses.
+
+    HTTP status code mapping per Venafi TPP spec:
+    * **401** — Expired/revoked token.  Consider refreshing via
+      ``POST /vedauth/authorize/token``.
+    * **403** — Insufficient scope (since TPP 20.4; was 401 before).
+    * **404** — Object does not exist.
+    * **400** — Missing/invalid parameters, expired grant.
+    * **409** — Object already exists or read-only.
+    * **500** — CA unreachable, internal failures.
+
+    .. note::
+       TPP does **not** return HTTP 429.  Rate limiting is handled via the
+       configurable session pool model.
+    """
     if resp.ok:
         return
 
@@ -340,10 +423,16 @@ def _raise_for_status(resp: requests.Response, context: str) -> None:
 
     if status == 401:
         raise VenafiAuthenticationError(
-            f"{context}: authentication expired or invalid (HTTP 401)."
+            f"{context}: authentication expired or invalid (HTTP 401). "
+            "If using OAuth, try refreshing the token via "
+            "POST /vedauth/authorize/token."
         )
     if status == 403:
-        raise VenafiAuthenticationError(f"{context}: forbidden (HTTP 403). Check permissions.")
+        raise VenafiAuthenticationError(
+            f"{context}: forbidden (HTTP 403). Check token scopes and "
+            "object permissions. Note: TPP 20.4+ returns 403 for "
+            "insufficient scope (was 401 in earlier versions)."
+        )
     if status == 404:
         raise VenafiCertificateNotFoundError(f"{context}: resource not found (HTTP 404).")
 
@@ -367,11 +456,18 @@ def _approve_workflow_tickets(
     *,
     timeout: int = 30,
 ) -> None:
-    """Find and approve any pending workflow tickets for a certificate DN."""
+    """Find and approve any pending workflow tickets for a certificate DN.
+
+    Spec reference:
+    * ``POST /vedsdk/workflow/ticket/enumerate`` — list tickets for an object.
+    * ``POST /vedsdk/workflow/ticket/updatestatus`` — approve or reject.
+      Request: ``{"GUID": "...", "Status": "Approved", "Explanation": "..."}``.
+    """
     approval_cfg: JsonDict = venafi_cfg.get("approval", {})
     reason: str = approval_cfg.get("reason", "Automated renewal approved by certmesh")
 
     # Step 1: list pending tickets for the object
+    # Spec: POST /vedsdk/workflow/ticket/enumerate
     list_url = f"{base}/vedsdk/workflow/ticket/enumerate"
     list_payload: JsonDict = {"ObjectDN": certificate_dn}
 
@@ -386,17 +482,21 @@ def _approve_workflow_tickets(
         return
 
     # Step 2: approve each ticket
-    approve_url = f"{base}/vedsdk/workflow/ticket/update"
+    # Spec: POST /vedsdk/workflow/ticket/updatestatus (NOT /ticket/update)
+    approve_url = f"{base}/vedsdk/workflow/ticket/updatestatus"
 
     for ticket in tickets:
-        ticket_id = ticket.get("Id", ticket.get("id"))
-        if ticket_id is None:
-            logger.warning("Workflow ticket missing 'Id' field.", extra={"ticket": ticket})
+        # Tickets carry a GUID identifier per spec.  Fall back to "Id" for
+        # older TPP versions that may still use integer IDs.
+        ticket_guid = ticket.get("GUID", ticket.get("Guid", ticket.get("Id", ticket.get("id"))))
+        if ticket_guid is None:
+            logger.warning("Workflow ticket missing GUID/Id field.", extra={"ticket": ticket})
             continue
 
+        # Spec: {"GUID": "...", "Status": "Approved", "Explanation": "..."}
         approve_payload: JsonDict = {
-            "Id": ticket_id,
-            "Result": 1,  # 1 = Approved
+            "GUID": str(ticket_guid),
+            "Status": "Approved",
             "Explanation": reason,
         }
 
@@ -408,14 +508,14 @@ def _approve_workflow_tickets(
 
         if not approve_resp.ok:
             raise VenafiWorkflowApprovalError(
-                f"Failed to approve workflow ticket {ticket_id} for "
+                f"Failed to approve workflow ticket {ticket_guid} for "
                 f"DN='{certificate_dn}': HTTP {approve_resp.status_code} — "
                 f"{approve_resp.text[:300]}"
             )
 
         logger.info(
             "Approved workflow ticket.",
-            extra={"ticket_id": ticket_id, "certificate_dn": certificate_dn},
+            extra={"ticket_guid": ticket_guid, "certificate_dn": certificate_dn},
         )
 
 
@@ -433,6 +533,17 @@ def _poll_certificate_ready(
     timeout: int = 30,
 ) -> None:
     """Poll until the certificate DN has reached ``stage >= 500`` (issued).
+
+    Spec reference: ``GET /vedsdk/Certificates/{guid}`` for metadata.
+    Stage values per spec:
+    * Stage -1 = "Queued for renewal"
+    * Stage 0 = "Not yet available"
+    * Stage >= 500 = Certificate issued / available for download
+
+    .. note::
+       TPP uses a **Workflow/Ticket** system for approvals — there are no
+       WebSocket, long-polling, or async job endpoints.  Polling is the
+       standard approach.
 
     Raises ``VenafiPollingTimeoutError`` if the timeout elapses.
     """
@@ -500,7 +611,15 @@ def _download_pkcs12(
     include_chain: bool = True,
     timeout: int = 30,
 ) -> bytes:
-    """Retrieve a PKCS#12 bundle from Venafi TPP (server-side key mode)."""
+    """Retrieve a PKCS#12 bundle from Venafi TPP (server-side key mode).
+
+    Spec reference: ``POST /vedsdk/Certificates/Retrieve``
+    Required token scope: ``certificate:manage``
+    Required permissions: Read + Private Key Read
+
+    Format MIME type for PKCS#12: ``application/x-pkcs12``.
+    Password must be at least 12 chars with 3 of 4 char types.
+    """
     url = f"{base}/vedsdk/certificates/retrieve"
 
     payload: JsonDict = {
@@ -551,8 +670,12 @@ def _download_base64_cert(
 ) -> str:
     """Retrieve a Base64-encoded certificate (no private key) from Venafi TPP.
 
+    Spec reference: ``POST /vedsdk/Certificates/Retrieve`` with
+    ``Format="Base64"`` and ``IncludePrivateKey=false``.
+
     Used in the client-side CSR flow where the private key was never sent to
-    Venafi.
+    Venafi.  For Base64/PEM format, ``CertificateData`` IS the PEM content
+    (already base64-encoded PEM).
     """
     url = f"{base}/vedsdk/certificates/retrieve"
 
@@ -610,14 +733,19 @@ def renew_and_download_certificate(
 ) -> CertificateBundle:
     """Renew an existing Venafi TPP certificate and download the result.
 
+    Spec reference: ``POST /vedsdk/Certificates/Renew``
+    Required token scope: ``certificate:manage``
+    Required permissions: Write + Private Key Read
+
     Workflow:
-    1. POST ``/vedsdk/certificates/renew`` to initiate the renewal.
-    2. Approve any pending workflow tickets.
-    3. Poll until the certificate reaches *issued* state.
-    4. Download the PKCS#12 bundle and extract the material.
+    1. ``POST /vedsdk/certificates/renew`` to initiate the renewal.
+    2. ``POST /vedsdk/workflow/ticket/enumerate`` + ``updatestatus`` to
+       approve any pending workflow tickets.
+    3. Poll ``GET /vedsdk/certificates/{guid}`` until stage ≥ 500 (issued).
+    4. ``POST /vedsdk/certificates/retrieve`` to download the PKCS#12 bundle.
     5. Assemble and return a ``CertificateBundle``.
 
-    This function is wrapped with retry + circuit breaker decorators.
+    This function is wrapped with tenacity retry + circuit breaker decorators.
     """
     base = _base_url(venafi_cfg)
     timeout = _timeout(venafi_cfg)
@@ -746,8 +874,16 @@ def list_certificates(
 ) -> list[VenafiCertificateSummary]:
     """List certificates managed by Venafi TPP with pagination.
 
-    Calls ``GET /vedsdk/certificates/`` with ``Limit`` and ``Offset`` query
-    parameters.
+    Spec reference: ``GET /vedsdk/Certificates/``
+    Required token scope: ``certificate`` (read access implied)
+
+    Query parameters: ``Limit`` (default 100), ``Offset``.
+    Response includes ``Certificates`` array, ``DataRange``, ``TotalCount``,
+    and ``_links`` for next/previous pagination.
+
+    .. note::
+       Trailing slash on the URL may be required in some TPP versions —
+       included for safety per spec.
     """
     base = _base_url(venafi_cfg)
     timeout = _timeout(venafi_cfg)
@@ -813,9 +949,18 @@ def search_certificates(
     limit: int = 100,
     offset: int = 0,
 ) -> list[VenafiCertificateSummary]:
-    """Search certificates via ``POST /vedsdk/certificates/`` with filters.
+    """Search certificates via ``GET /vedsdk/Certificates/`` with filters.
 
-    Only non-``None`` filter parameters are included in the request body.
+    Spec reference: ``GET /vedsdk/Certificates/``
+    Required token scope: ``certificate`` (read access implied)
+
+    The spec defines all filter fields as query parameters for GET requests.
+    This implementation sends them as a JSON POST body, which Venafi TPP also
+    accepts.  Only non-``None`` filter parameters are included.
+
+    Available filters per spec: ``CN``, ``SAN-DNS``, ``Serial``,
+    ``Thumbprint``, ``Issuer``, ``KeySize``, ``ValidToLess``,
+    ``ValidToGreater``, ``ManagedBy``, ``Stage``, and many more.
     """
     base = _base_url(venafi_cfg)
     timeout = _timeout(venafi_cfg)
@@ -897,7 +1042,13 @@ def describe_certificate(
 ) -> VenafiCertificateDetail:
     """Retrieve detailed information for a single certificate by GUID.
 
-    Calls ``GET /vedsdk/certificates/{guid}``.
+    Spec reference: ``GET /vedsdk/Certificates/{guid}``
+    Required token scope: ``certificate`` (read access implied)
+
+    Returns the full certificate object including ``CertificateDetails``
+    (CN, KeyAlgorithm, KeySize, Serial, Thumbprint, ValidFrom, ValidTo,
+    Subject, SubjectAltNameDNS, Issuer, SignatureAlgorithm) and
+    ``ProcessingDetails`` (InError, InProcess, Stage, Status).
     """
     base = _base_url(venafi_cfg)
     timeout = _timeout(venafi_cfg)
@@ -969,22 +1120,28 @@ def revoke_certificate(
 ) -> JsonDict:
     """Revoke a certificate in Venafi TPP.
 
-    Calls ``POST /vedsdk/certificates/revoke``.
+    Spec reference: ``POST /vedsdk/Certificates/Revoke``
 
     Provide either ``certificate_dn`` or ``thumbprint`` to identify the
-    certificate.
+    certificate.  Revocation reason codes follow RFC 5280 CRLReason:
+    0=Unspecified, 1=KeyCompromise, 2=CACompromise, 3=AffiliationChanged,
+    4=Superseded, 5=CessationOfOperation.
+
+    Required token scope: ``certificate:revoke``.
 
     Args:
         session: An authenticated Venafi session.
         venafi_cfg: The ``venafi`` configuration section.
         certificate_dn: The distinguished name of the certificate object.
         thumbprint: The SHA-1 thumbprint of the certificate.
-        reason: Revocation reason code (0=unspecified, 1=key_compromise, etc.).
-        comments: Optional human-readable comment attached to the revocation.
-        disable: If ``True``, also disable the certificate object in TPP.
+        reason: Revocation reason code (0-5 per RFC 5280).
+        comments: Human-readable comment (max 250 chars for Entrust CAs).
+        disable: If ``True``, disable the cert object (no replacement).
+            ``False`` allows re-enrollment.
 
     Returns:
         The JSON response body from the revocation endpoint.
+        On success: ``{"Requested": true, "Success": true}``.
 
     Raises:
         VenafiAPIError: On unexpected API errors.
@@ -1015,7 +1172,9 @@ def revoke_certificate(
         if comments:
             payload["Comments"] = comments
         if disable:
-            payload["Disabled"] = True
+            # Spec: field name is "Disable" (not "Disabled").
+            # true = disable cert (no replacement), false = allow re-enrollment.
+            payload["Disable"] = True
 
         resp = session.post(url, json=payload, timeout=timeout)
         _raise_for_status(resp, "Revoke certificate")
@@ -1057,18 +1216,25 @@ def request_certificate(
 ) -> CertificateBundle:
     """Request a new certificate from Venafi TPP.
 
-    Calls ``POST /vedsdk/certificates/request`` to submit a new enrollment
-    request.  After the certificate is issued, downloads and returns the
-    material as a ``CertificateBundle``.
+    Spec reference: ``POST /vedsdk/Certificates/Request``
+    Required token scope: ``certificate:manage``
+    Required permissions: Create permission to PolicyDN + Private Key Read
+
+    Submits a new enrollment request and, after issuance, downloads and
+    returns the material as a ``CertificateBundle``.
 
     Two modes are supported:
 
     * **Server-side key** (``use_csr=False``): Venafi generates the key pair.
-      After issuance the PKCS#12 bundle is downloaded and the key is
-      extracted locally.
+      After issuance the PKCS#12 bundle is downloaded via
+      ``POST /vedsdk/Certificates/Retrieve`` and the key is extracted locally.
     * **Client-side CSR** (``use_csr=True``): The client generates an RSA key
-      pair and CSR, submits the CSR to Venafi, and downloads only the signed
-      certificate.
+      pair and CSR, submits the CSR via the ``PKCS10`` field, and downloads
+      only the signed certificate.
+
+    v25.3 additions: ``SidExtensionIdentity`` and ``SidExtensionValue``
+    fields are available for AD Security Identifier certificate extensions
+    but are not currently used by this function.
 
     Args:
         session: An authenticated Venafi session.
@@ -1105,10 +1271,13 @@ def request_certificate(
         }
 
         # SAN DNS entries
+        # Spec: SubjectAltNames accepts both numeric Type and string TypeName.
+        # Valid TypeName values: "DNS", "IPAddress", "Email", "URI", "OtherName"
+        # Equivalent numeric Type values: 2 (DNS), 7 (IP), 1 (Email), 6 (URI), 0 (Other)
+        # Using string "DNS" for clarity per spec examples.
         if subject.san_dns_names:
             payload["SubjectAltNames"] = [
-                {"TypeName": "2", "Name": name}  # Type 2 = DNS name
-                for name in subject.san_dns_names
+                {"TypeName": "DNS", "Name": name} for name in subject.san_dns_names
             ]
 
         # Client-side CSR path
