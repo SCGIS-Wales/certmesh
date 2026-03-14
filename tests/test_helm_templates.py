@@ -19,25 +19,35 @@ class TestVaultPkiTlsTemplate:
     def test_init_container_rendered_when_enabled(self):
         output = _helm_template("vaultPkiTls.enabled=true", "vault.url=http://vault:8200")
         assert "vault-tls-init" in output
-        assert "vault write -format=json" in output
+        # Init script is now in a ConfigMap, verify it's mounted
+        assert "init-script" in output
+        assert "vault-tls-init.sh" in output
 
-    def test_ca_chain_fetch_enabled(self):
+    def test_init_script_configmap_rendered(self):
+        output = _helm_template("vaultPkiTls.enabled=true", "vault.url=http://vault:8200")
+        assert "configmap-init-script" in output or "init-script" in output
+        # The script contains both CA chain fetch paths (runtime decision)
+        assert "Fetching intermediate CA" in output
+        assert "fetchCaChain=false" in output or "FETCH_CA_CHAIN" in output
+
+    def test_ca_chain_fetch_env_vars(self):
         output = _helm_template(
             "vaultPkiTls.enabled=true",
             "vaultPkiTls.fetchCaChain=true",
             "vault.url=http://vault:8200",
         )
-        assert "Fetching intermediate CA" in output
-        assert "Fetching root CA" in output
+        assert "FETCH_CA_CHAIN" in output
+        assert '"true"' in output
 
-    def test_ca_chain_fetch_disabled(self):
+    def test_ca_chain_fetch_disabled_env_var(self):
         output = _helm_template(
             "vaultPkiTls.enabled=true",
             "vaultPkiTls.fetchCaChain=false",
             "vault.url=http://vault:8200",
         )
-        assert "fetchCaChain=false" in output
-        assert "Fetching intermediate CA" not in output
+        # When fetchCaChain=false, the env var is set to "false"
+        # and the runtime script uses the issuing_ca path instead
+        assert "FETCH_CA_CHAIN" in output
 
     def test_approle_auth_sets_env(self):
         output = _helm_template(
@@ -48,15 +58,15 @@ class TestVaultPkiTlsTemplate:
         )
         assert "VAULT_ROLE_ID" in output
         assert "VAULT_SECRET_ID" in output
-        assert "AppRole" in output
 
-    def test_kubernetes_auth(self):
+    def test_kubernetes_auth_env(self):
         output = _helm_template(
             "vaultPkiTls.enabled=true",
             "vault.url=http://vault:8200",
             "vault.authMethod=kubernetes",
         )
-        assert "Kubernetes ServiceAccount" in output
+        assert "VAULT_AUTH_METHOD" in output
+        assert '"kubernetes"' in output
 
 
 class TestCertRenewalTemplate:

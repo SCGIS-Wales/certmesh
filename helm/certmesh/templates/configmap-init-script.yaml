@@ -1,0 +1,154 @@
+{{- if and .Values.vaultPkiTls.enabled (ne (default "initContainer" .Values.vaultPkiTls.method) "certManager") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "certmesh.fullname" . }}-init-script
+  namespace: {{ include "certmesh.namespace" . }}
+  labels:
+    {{- include "certmesh.labels" . | nindent 4 }}
+data:
+  vault-tls-init.sh: |
+    #!/bin/sh
+    # =============================================================================
+    # vault-tls-init.sh — Vault PKI TLS certificate bootstrap for certmesh
+    # =============================================================================
+    # Runs as an init container to issue a TLS certificate from Vault PKI
+    # before the main certmesh API container starts.
+    #
+    # Expects:
+    #   VAULT_ADDR          — Vault server URL (e.g. http://vault:8200)
+    #   VAULT_AUTH_METHOD   — "approle" or "kubernetes"
+    #   VAULT_ROLE_ID       — (AppRole) Role ID
+    #   VAULT_SECRET_ID     — (AppRole) Secret ID
+    #   PKI_MOUNT_POINT     — Issuing PKI engine mount (e.g. pki_int)
+    #   PKI_ROLE_NAME       — PKI role for issuing certs
+    #   PKI_COMMON_NAME     — Certificate common name
+    #   PKI_TTL             — Certificate TTL (e.g. 8760h)
+    #   PKI_SANS            — Subject Alternative Names (comma-separated)
+    #   FETCH_CA_CHAIN      — "true" to fetch intermediate + root CA
+    #   INT_MOUNT_POINT     — Intermediate PKI mount (for CA chain)
+    #   ROOT_MOUNT_POINT    — Root PKI mount (for CA chain)
+    #   TLS_DIR             — Output directory for cert files (e.g. /tls)
+    # =============================================================================
+    set -e
+
+    log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] vault-tls-init: $*"; }
+
+    # ---------------------------------------------------------------------------
+    # json_field: extract a top-level string value from Vault JSON output.
+    # Replaces jq (not available in the hashicorp/vault image).
+    # Handles PEM values containing embedded \n escape sequences.
+    # Usage: json_field <key> <file>
+    # ---------------------------------------------------------------------------
+    json_field() {
+      awk -v key="$1" '
+        BEGIN { found=0 }
+        $0 ~ "\"" key "\": \"" {
+          sub(".*\"" key "\": \"", "")
+          sub("\"[,]?$", "")
+          gsub(/\\n/, "\n")
+          print
+          found=1
+          exit
+        }
+        END { if (!found) exit 1 }
+      ' "$2"
+    }
+
+    # ========================= DIAGNOSTICS ======================================
+    log "Starting TLS certificate issuance..."
+    log "  VAULT_ADDR=${VAULT_ADDR}"
+
+    VAULT_VER=$(vault version 2>/dev/null || echo "unknown")
+    log "  Vault CLI version: ${VAULT_VER}"
+
+    VAULT_STATUS=$(vault status -format=json 2>/dev/null || echo "{}")
+    SERVER_VER=$(echo "${VAULT_STATUS}" | awk -F'"' '/"version"/{print $4}')
+    log "  Vault server version: ${SERVER_VER:-unknown}"
+
+    # ========================= STEP 1: AUTHENTICATE =============================
+    # NOTE: "export VAR=$(cmd)" masks failures under set -e.
+    # We assign first, then export.
+    if [ "${VAULT_AUTH_METHOD}" = "approle" ]; then
+      log "Authenticating via AppRole..."
+      VAULT_TOKEN=$(vault write -field=token auth/approle/login \
+        role_id="${VAULT_ROLE_ID}" \
+        secret_id="${VAULT_SECRET_ID}")
+      export VAULT_TOKEN
+      log "AppRole authentication successful."
+
+    elif [ "${VAULT_AUTH_METHOD}" = "kubernetes" ]; then
+      log "Authenticating via Kubernetes ServiceAccount..."
+      SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+      VAULT_TOKEN=$(vault write -field=token auth/kubernetes/login \
+        role="{{ .Values.vault.kubernetes.role | default "certmesh" }}" \
+        jwt="${SA_TOKEN}")
+      export VAULT_TOKEN
+      log "Kubernetes authentication successful."
+
+    else
+      log "ERROR: Unsupported auth method '${VAULT_AUTH_METHOD}'"
+      exit 1
+    fi
+
+    # --- Token diagnostics ---
+    TOKEN_INFO=$(vault token lookup -format=json 2>/dev/null || echo "{}")
+    TOKEN_TTL=$(echo "${TOKEN_INFO}" | awk '/"ttl"/ { gsub(/[^0-9]/, "", $2); print $2 }')
+    TOKEN_DISPLAY=$(echo "${TOKEN_INFO}" | awk -F'"' '/"display_name"/{print $4}')
+    if [ -n "${TOKEN_TTL}" ]; then
+      TTL_HOURS=$((TOKEN_TTL / 3600))
+      TTL_MINS=$(( (TOKEN_TTL % 3600) / 60 ))
+      log "  Token TTL: ${TOKEN_TTL}s (${TTL_HOURS}h ${TTL_MINS}m)"
+    else
+      log "  Token TTL: unknown (token lookup failed)"
+    fi
+    log "  Token identity: ${TOKEN_DISPLAY:-unknown}"
+
+    # ========================= STEP 2: ISSUE LEAF CERTIFICATE ===================
+    log "Issuing leaf certificate from ${PKI_MOUNT_POINT}/issue/${PKI_ROLE_NAME}..."
+    log "  CN=${PKI_COMMON_NAME}, TTL=${PKI_TTL}"
+
+    ISSUE_ARGS="common_name=${PKI_COMMON_NAME} ttl=${PKI_TTL}"
+    if [ -n "${PKI_SANS}" ]; then
+      ISSUE_ARGS="${ISSUE_ARGS} alt_names=${PKI_SANS}"
+    fi
+
+    vault write -format=json \
+      "${PKI_MOUNT_POINT}/issue/${PKI_ROLE_NAME}" \
+      ${ISSUE_ARGS} \
+      > /tmp/tls-response.json
+
+    json_field certificate /tmp/tls-response.json > "${TLS_DIR}/tls.crt"
+    json_field private_key /tmp/tls-response.json > "${TLS_DIR}/tls.key"
+    SERIAL=$(json_field serial_number /tmp/tls-response.json)
+    log "Leaf certificate issued successfully (serial=${SERIAL})."
+
+    # ========================= STEP 3: BUILD CA CHAIN ===========================
+    if [ "${FETCH_CA_CHAIN}" = "true" ]; then
+      log "Fetching intermediate CA from ${INT_MOUNT_POINT}/cert/ca..."
+      vault read -field=certificate "${INT_MOUNT_POINT}/cert/ca" > /tmp/intermediate.crt
+      log "Intermediate CA fetched ($(wc -l < /tmp/intermediate.crt) lines)."
+
+      log "Fetching root CA from ${ROOT_MOUNT_POINT}/cert/ca..."
+      vault read -field=certificate "${ROOT_MOUNT_POINT}/cert/ca" > /tmp/root.crt
+      log "Root CA fetched ($(wc -l < /tmp/root.crt) lines)."
+
+      # Ensure newline between PEM blocks (vault read omits trailing newline)
+      { cat /tmp/intermediate.crt; echo; cat /tmp/root.crt; } > "${TLS_DIR}/ca.crt"
+      log "CA bundle built: intermediate (${INT_MOUNT_POINT}) + root (${ROOT_MOUNT_POINT})."
+    else
+      log "Using issuing CA from certificate response (fetchCaChain=false)."
+      json_field issuing_ca /tmp/tls-response.json > "${TLS_DIR}/ca.crt"
+    fi
+
+    # ========================= STEP 4: PERMISSIONS & CLEANUP ====================
+    chmod 600 "${TLS_DIR}/tls.key"
+    chmod 644 "${TLS_DIR}/tls.crt" "${TLS_DIR}/ca.crt"
+    rm -f /tmp/tls-response.json /tmp/intermediate.crt /tmp/root.crt
+
+    log "TLS certificate files written to ${TLS_DIR}/:"
+    log "  cert: ${TLS_DIR}/tls.crt ($(wc -l < "${TLS_DIR}/tls.crt") lines)"
+    log "  key:  ${TLS_DIR}/tls.key (permissions 600)"
+    log "  ca:   ${TLS_DIR}/ca.crt ($(wc -l < "${TLS_DIR}/ca.crt") lines)"
+    log "TLS certificate issuance complete."
+{{- end }}
