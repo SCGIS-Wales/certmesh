@@ -234,6 +234,7 @@ jobs:
       - uses: AbsaOSS/k3d-action@v2
         with:
           cluster-name: certmesh-ci
+          k3d-version: v5.8.3
           args: >-
             --image rancher/k3s:v1.34.5-k3s1
             --wait
