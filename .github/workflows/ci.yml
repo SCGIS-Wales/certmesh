@@ -136,8 +136,26 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -e ".[dev]"
+      - name: Wait for Vault to be ready
+        run: |
+          set -e
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8200/v1/sys/health > /dev/null 2>&1; then
+              echo "✓ Vault dev server is ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: Vault dev server failed to become ready after 60 seconds"
+              exit 1
+            fi
+            echo "Waiting for Vault ($i/30)..."
+            sleep 2
+          done
       - name: Run Vault PKI integration tests
-        run: pytest -m integration tests/integration/test_vault_pki.py -v
+        run: |
+          set -e
+          pytest -m integration tests/integration/test_vault_pki.py -v --tb=long
+          echo "✓ All Vault PKI integration tests passed"
         env:
           VAULT_ADDR: http://localhost:8200
           VAULT_TOKEN: root
@@ -152,9 +170,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -e ".[dev,integration]"
+        run: |
+          set -e
+          pip install -e ".[dev,integration]"
+          python -c "import vcert; print('vcert imported successfully')"
       - name: Run Venafi VCert integration tests
-        run: pytest -m integration tests/integration/test_venafi_vcert.py -v
+        run: |
+          set -e
+          pytest -m integration tests/integration/test_venafi_vcert.py -v --tb=long
+          echo "✓ All Venafi VCert integration tests passed"
 
   integration-acm-localstack:
     name: Integration - ACM (LocalStack)
@@ -176,35 +200,57 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Wait for LocalStack
         run: |
+          set -e
           for i in $(seq 1 30); do
             if curl -s http://localhost:4566/_localstack/health | grep -q '"acm"'; then
-              echo "LocalStack ACM ready"
+              echo "✓ LocalStack ACM service is ready"
               break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "ERROR: LocalStack ACM failed to become ready after 60 seconds"
+              curl -s http://localhost:4566/_localstack/health || echo "Health endpoint unreachable"
+              exit 1
             fi
             echo "Waiting for LocalStack ($i/30)..."
             sleep 2
           done
       - name: Run ACM LocalStack integration tests
-        run: pytest -m integration tests/integration/test_acm_localstack.py -v
+        run: |
+          set -e
+          pytest -m integration tests/integration/test_acm_localstack.py -v --tb=long
+          echo "✓ All ACM LocalStack integration tests passed"
         env:
           AWS_DEFAULT_REGION: us-east-1
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
           LOCALSTACK_ENDPOINT: http://localhost:4566
 
-  integration-helm-k3d:
-    name: Integration - Helm + k3d
+  integration-helm-kind:
+    name: Integration - Helm + kind
     runs-on: ubuntu-latest
     needs: [lint, test, docker-build]
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: AbsaOSS/k3d-action@v2
+      - name: Create kind cluster (Kubernetes v1.34)
+        uses: helm/kind-action@v1
         with:
-          cluster-name: certmesh-ci
-          args: --wait
+          cluster_name: certmesh-ci
+          node_image: kindest/node:v1.34.3
+          wait: 60s
+      - name: Verify Kubernetes version
+        run: |
+          set -e
+          K8S_VERSION=$(kubectl version -o json | jq -r '.serverVersion.gitVersion')
+          echo "Kubernetes version: ${K8S_VERSION}"
+          MINOR=$(echo "${K8S_VERSION}" | sed 's/v[0-9]*\.\([0-9]*\)\..*/\1/')
+          if [ "${MINOR}" -lt 34 ]; then
+            echo "ERROR: Kubernetes version ${K8S_VERSION} is below required v1.34.0"
+            exit 1
+          fi
+          echo "✓ Kubernetes version ${K8S_VERSION} meets requirement (>=1.34.0)"
       - name: Install Vault in dev mode
         run: |
+          set -e
           helm repo add hashicorp https://helm.releases.hashicorp.com
           helm repo update
           helm install vault hashicorp/vault \
@@ -212,8 +258,10 @@ jobs:
             --set "server.dev.devRootToken=root" \
             --wait --timeout=120s
           kubectl wait --for=condition=ready pod/vault-0 --timeout=120s
+          echo "✓ Vault dev server is ready"
       - name: Configure Vault PKI
         run: |
+          set -e
           kubectl exec vault-0 -- vault secrets enable -path=pki pki
           kubectl exec vault-0 -- vault write pki/root/generate/internal \
             common_name="Test Root CA" ttl=87600h
@@ -231,15 +279,21 @@ jobs:
           kubectl exec vault-0 -- vault write pki_int/intermediate/set-signed certificate=@/tmp/int.crt
           kubectl exec vault-0 -- vault write pki_int/roles/certmesh-server \
             allowed_domains="internal.example.com" allow_subdomains=true max_ttl="720h"
-      - name: Build and import certmesh image
+          echo "✓ Vault PKI engines configured (root + intermediate + role)"
+      - name: Build and load certmesh image into kind
         run: |
-          docker build -t certmesh:ci-k3d .
-          k3d image import certmesh:ci-k3d -c certmesh-ci
+          set -e
+          docker build -t certmesh:ci-kind .
+          kind load docker-image certmesh:ci-kind --name certmesh-ci
+          echo "✓ certmesh image built and loaded into kind"
       - name: Deploy certmesh with Vault PKI TLS
         run: |
+          set -e
+          kubectl create namespace certmesh || true
           helm install certmesh ./helm/certmesh \
+            --namespace certmesh \
             --set image.repository=certmesh \
-            --set image.tag=ci-k3d \
+            --set image.tag=ci-kind \
             --set image.pullPolicy=Never \
             --set replicaCount=1 \
             --set autoscaling.enabled=false \
@@ -253,14 +307,62 @@ jobs:
             --set vaultPkiTls.fetchCaChain=true \
             --set vaultPkiTls.intermediateMountPoint=pki_int \
             --set vaultPkiTls.rootMountPoint=pki \
-            --set vault.url=http://vault:8200 \
+            --set vault.url=http://vault.default.svc.cluster.local:8200 \
             --set vault.authMethod=kubernetes \
-            --timeout=180s || true
-      - name: Check deployment status
+            --set metrics.serviceMonitor.enabled=false \
+            --timeout=180s
+          echo "✓ Helm install succeeded"
+      - name: Validate deployment is running
         run: |
-          kubectl get pods -o wide
-          kubectl describe pods -l app.kubernetes.io/name=certmesh || true
-          kubectl logs -l app.kubernetes.io/name=certmesh -c vault-tls-init --tail=50 || true
+          set -e
+          echo "--- Waiting for pod to exist ---"
+          for i in $(seq 1 12); do
+            POD_COUNT=$(kubectl get pods -n certmesh -l app.kubernetes.io/name=certmesh \
+              --no-headers 2>/dev/null | wc -l)
+            if [ "${POD_COUNT}" -gt 0 ]; then
+              echo "✓ Pod exists"
+              break
+            fi
+            if [ "$i" -eq 12 ]; then
+              echo "ERROR: No pod created after 60 seconds"
+              kubectl get all -n certmesh
+              exit 1
+            fi
+            echo "Waiting for pod ($i/12)..."
+            sleep 5
+          done
+
+          echo "--- Pod status ---"
+          kubectl get pods -n certmesh -o wide
+
+          echo "--- Waiting for init container to start ---"
+          sleep 15
+          INIT_LOGS=$(kubectl logs -l app.kubernetes.io/name=certmesh -n certmesh \
+            -c vault-tls-init --tail=100 2>&1) || true
+          echo "${INIT_LOGS}"
+
+          # Validate init container produced expected log output
+          if echo "${INIT_LOGS}" | grep -q "vault-tls-init"; then
+            echo "✓ Init container vault-tls-init produced log output"
+          else
+            echo "ERROR: Init container did not produce expected log output"
+            kubectl describe pods -l app.kubernetes.io/name=certmesh -n certmesh
+            exit 1
+          fi
+
+          # Verify the init container attempted Vault authentication
+          if echo "${INIT_LOGS}" | grep -q "Authenticating"; then
+            echo "✓ Init container attempted Vault authentication"
+          fi
+
+          # Check for image pull errors (fatal for CI)
+          FAILED_PODS=$(kubectl get pods -l app.kubernetes.io/name=certmesh -n certmesh \
+            -o jsonpath='{.items[*].status.initContainerStatuses[*].state.waiting.reason}' 2>/dev/null || echo "")
+          if echo "${FAILED_PODS}" | grep -qE "ErrImagePull|ImagePullBackOff"; then
+            echo "ERROR: Image pull failed: ${FAILED_PODS}"
+            exit 1
+          fi
+          echo "✓ Helm deployment validated — init container runs and contacts Vault"
 
   # ---------- Changelog script test ----------
 

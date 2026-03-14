@@ -9,7 +9,28 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Organisational prefix for all resource names.
+# --- Default Namespace ---
+# The namespace where certmesh resources are deployed.
+# If set, this becomes the default namespace for all resources.
+# If not specified (empty), Helm uses the release namespace (--namespace flag).
+# When companyPrefix is set, the namespace becomes "<companyPrefix>certmesh".
+#
+# Examples:
+#   namespace: "certmesh"                         → namespace: certmesh
+#   namespace: "certmesh", companyPrefix: "acme-"  → namespace: acme-certmesh
+#   namespace: ""                                  → uses helm --namespace flag
+namespace: "certmesh"
+
+# Organisational/company prefix applied to namespace and resource names.
+# Set to "" (default) for no prefix.
+# Examples:
+#   companyPrefix: "acme-"  → namespace: acme-certmesh, resources: acme-certmesh-*
+#   companyPrefix: "corp-"  → namespace: corp-certmesh, resources: corp-certmesh-*
+#   companyPrefix: ""       → namespace: certmesh, resources: certmesh-*
+companyPrefix: ""
+
+# Prefix for all resource names (independent of namespace prefix).
+# Deprecated: prefer companyPrefix which applies to both namespace and resources.
 # Set to "" (default) for no prefix.
 # Example: "acme-" would produce resources like "acme-certmesh"
 resourcePrefix: ""
@@ -368,10 +389,13 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Topology spread constraints for multi-zone clusters.
+# Default: ScheduleAnyway (soft constraint) — allows scheduling on single-node
+# clusters. Change to DoNotSchedule for hard zone enforcement in production.
 topologySpreadConstraints:
   - maxSkew: 1
     topologyKey: topology.kubernetes.io/zone
-    whenUnsatisfiable: DoNotSchedule
+    whenUnsatisfiable: ScheduleAnyway
     labelSelector:
       matchLabels: {}  # populated by _helpers.tpl
 

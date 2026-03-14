@@ -200,6 +200,50 @@ class TestVaultPKISign:
         assert result["data"]["serial_number"]
 
 
+class TestVaultPKIErrorHandling:
+    """Test error handling for invalid operations."""
+
+    def test_issue_unauthorized_domain(self, vault_client):
+        """Issuing a cert for a domain not in allowed_domains should fail."""
+        client, mount = vault_client
+        with pytest.raises(hvac.exceptions.InvalidRequest) as exc_info:
+            client.secrets.pki.generate_certificate(
+                name="test-server",
+                common_name="unauthorized.badexample.com",
+                mount_point=mount,
+                extra_params={"ttl": "24h"},
+            )
+        # Vault returns a clear error about the domain not being allowed
+        error_msg = str(exc_info.value)
+        assert "common name" in error_msg.lower() or "not allowed" in error_msg.lower()
+
+    def test_issue_nonexistent_role(self, vault_client):
+        """Issuing a cert with a nonexistent role should fail."""
+        client, mount = vault_client
+        with pytest.raises(hvac.exceptions.InvalidRequest):
+            client.secrets.pki.generate_certificate(
+                name="nonexistent-role",
+                common_name="test.example.com",
+                mount_point=mount,
+                extra_params={"ttl": "24h"},
+            )
+
+    def test_revoke_invalid_serial(self, vault_client):
+        """Revoking with a garbage serial number should fail."""
+        client, mount = vault_client
+        with pytest.raises(hvac.exceptions.InvalidRequest):
+            client.secrets.pki.revoke_certificate("ZZ:ZZ:ZZ:ZZ:INVALID", mount_point=mount)
+
+    def test_read_nonexistent_certificate(self, vault_client):
+        """Reading a nonexistent serial should fail."""
+        client, mount = vault_client
+        with pytest.raises(hvac.exceptions.InvalidPath):
+            client.secrets.pki.read_certificate(
+                "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00",
+                mount_point=mount,
+            )
+
+
 class TestVaultPKICAChain:
     """Test CA chain retrieval (used by the Helm init container)."""
 
@@ -207,3 +251,11 @@ class TestVaultPKICAChain:
         client, mount = vault_client
         result = client.secrets.pki.read_certificate("ca", mount_point=mount)
         assert result["data"]["certificate"].startswith("-----BEGIN CERTIFICATE-----")
+
+    def test_ca_certificate_is_valid_pem(self, vault_client):
+        """Validate the CA cert is parseable PEM."""
+        client, mount = vault_client
+        result = client.secrets.pki.read_certificate("ca", mount_point=mount)
+        cert_pem = result["data"]["certificate"]
+        assert cert_pem.startswith("-----BEGIN CERTIFICATE-----")
+        assert cert_pem.strip().endswith("-----END CERTIFICATE-----")

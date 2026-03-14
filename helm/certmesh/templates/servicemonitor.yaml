@@ -3,11 +3,9 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "certmesh.fullname" . }}
+  namespace: {{ include "certmesh.namespace" . }}
   labels:
     {{- include "certmesh.labels" . | nindent 4 }}
-  {{- if .Values.metrics.serviceMonitor.namespace }}
-  namespace: {{ .Values.metrics.serviceMonitor.namespace }}
-  {{- end }}
 spec:
   selector:
     matchLabels:

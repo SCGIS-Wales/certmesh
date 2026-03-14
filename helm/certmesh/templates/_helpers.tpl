@@ -7,19 +7,21 @@ Expand the name of the chart.
 
 {{/*
 Create a default fully qualified app name.
+Applies companyPrefix or resourcePrefix (companyPrefix takes precedence).
 */}}
 {{- define "certmesh.fullname" -}}
+{{- $prefix := default (default "" .Values.companyPrefix) .Values.resourcePrefix }}
 {{- if .Values.fullnameOverride }}
 {{- $name := .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
-{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $name | trunc 63 | trimSuffix "-" }}{{- else }}{{- $name }}{{- end }}
+{{- if $prefix }}{{- printf "%s%s" $prefix $name | trunc 63 | trimSuffix "-" }}{{- else }}{{- $name }}{{- end }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
 {{- $base := .Release.Name | trunc 63 | trimSuffix "-" }}
-{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
+{{- if $prefix }}{{- printf "%s%s" $prefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
 {{- else }}
 {{- $base := printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
-{{- if .Values.resourcePrefix }}{{- printf "%s%s" .Values.resourcePrefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
+{{- if $prefix }}{{- printf "%s%s" $prefix $base | trunc 63 | trimSuffix "-" }}{{- else }}{{- $base }}{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -68,4 +70,18 @@ Image reference
 {{- define "certmesh.image" -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag }}
 {{- printf "%s:%s" .Values.image.repository $tag }}
+{{- end }}
+
+{{/*
+Default namespace.
+Uses companyPrefix + namespace if both are set.
+Falls back to Release.Namespace if namespace is empty.
+*/}}
+{{- define "certmesh.namespace" -}}
+{{- if .Values.namespace }}
+{{- $prefix := default "" .Values.companyPrefix }}
+{{- printf "%s%s" $prefix .Values.namespace | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- .Release.Namespace }}
+{{- end }}
 {{- end }}
