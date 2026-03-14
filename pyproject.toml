@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "certmesh"
-version = "3.0.4"
+version = "3.0.6"
 description = "Multi-provider TLS certificate lifecycle management — DigiCert, Venafi TPP, Vault PKI, ACM, Let's Encrypt"
 readme = "README.md"
 license = "MIT"
