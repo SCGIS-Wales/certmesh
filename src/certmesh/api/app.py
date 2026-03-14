@@ -95,19 +95,35 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         _max_keys_per_subject=api_key_config.max_keys_per_subject,
     )
 
-    # Vault client (optional)
+    # Vault client (optional — used for KV secrets, not PKI TLS)
     vault_cfg = cfg.get("vault", {})
     app.state.vault_client = None
     if vault_cfg.get("url"):
+        vault_url = vault_cfg["url"]
+        vault_auth = vault_cfg.get("auth_method", "unknown")
+        logger.info(
+            "Initializing Vault client",
+            extra={"vault_url": vault_url, "auth_method": vault_auth},
+        )
         try:
             from certmesh.backends import vault_client as vc
 
             client = vc.create_client(vault_cfg)
             vc.authenticate(client, vault_cfg)
             app.state.vault_client = client
-            logger.info("Vault client initialized and authenticated")
-        except Exception:
-            logger.warning("Vault client initialization failed, continuing without Vault")
+            logger.info(
+                "Vault client initialized and authenticated",
+                extra={"vault_url": vault_url, "auth_method": vault_auth},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Vault client initialization failed, continuing without Vault",
+                extra={
+                    "vault_url": vault_url,
+                    "auth_method": vault_auth,
+                    "error": str(exc),
+                },
+            )
 
     app.state.aws_required = False
 

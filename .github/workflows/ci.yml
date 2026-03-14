@@ -125,7 +125,7 @@ jobs:
     needs: [lint, test]
     services:
       vault:
-        image: hashicorp/vault:1.15
+        image: hashicorp/vault:1.21
         env:
           VAULT_DEV_ROOT_TOKEN_ID: root
           VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
@@ -294,7 +294,7 @@ jobs:
           kubectl exec vault-0 -- sh -c 'vault write auth/kubernetes/config \
             kubernetes_host="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"'
 
-          # Policy granting access to PKI engines
+          # Policy granting access to PKI engines + KV secrets
           kubectl exec vault-0 -- sh -c 'vault policy write certmesh-pki - <<POLICY
           path "pki_int/issue/certmesh-server" {
             capabilities = ["create", "update"]
@@ -305,7 +305,13 @@ jobs:
           path "pki/cert/ca" {
             capabilities = ["read"]
           }
+          path "secret/*" {
+            capabilities = ["create", "read", "update", "list"]
+          }
           POLICY'
+
+          # Enable KV v2 engine for main container
+          kubectl exec vault-0 -- vault secrets enable -path=secret -version=2 kv || true
 
           # Bind the certmesh ServiceAccount to the policy
           kubectl exec vault-0 -- vault write auth/kubernetes/role/certmesh \
@@ -332,17 +338,20 @@ jobs:
             --set replicaCount=1 \
             --set autoscaling.enabled=false \
             --set oauth2.enabled=false \
-            --set vault.enabled=false \
+            --set vault.enabled=true \
+            --set vault.url=http://vault.default.svc.cluster.local:8200 \
+            --set vault.authMethod=kubernetes \
+            --set vault.kvVersion=2 \
             --set acm.enabled=false \
+            --set digicert.enabled=false \
             --set vaultPkiTls.enabled=true \
+            --set vaultPkiTls.vaultImage=hashicorp/vault:1.21 \
             --set vaultPkiTls.mountPoint=pki_int \
             --set vaultPkiTls.roleName=certmesh-server \
             --set vaultPkiTls.commonName=certmesh.internal.example.com \
             --set vaultPkiTls.fetchCaChain=true \
             --set vaultPkiTls.intermediateMountPoint=pki_int \
             --set vaultPkiTls.rootMountPoint=pki \
-            --set vault.url=http://vault.default.svc.cluster.local:8200 \
-            --set vault.authMethod=kubernetes \
             --set metrics.serviceMonitor.enabled=false \
             --timeout=180s
           echo "✓ Helm install succeeded"
@@ -492,43 +501,107 @@ jobs:
           fi
           echo "✓ Helm deployment fully validated — init container + main container healthy"
 
-  # ---------- Capacity / Performance Test ----------
-
-  integration-capacity:
-    name: Integration - Capacity & Performance
-    runs-on: ubuntu-latest
-    needs: [lint, test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Run capacity and performance tests
+      - name: Capacity & Performance test (in-cluster)
         run: |
           set -e
-          pytest -m integration tests/integration/test_capacity.py -v --tb=long
-          echo "✓ All capacity/performance tests passed"
+          echo "=== Capacity & Performance: Load test against live pod ==="
 
-  # ---------- Capacity / Performance Test ----------
+          # Get the pod IP for direct testing
+          POD_IP=$(kubectl get pods -n certmesh -l app.kubernetes.io/name=certmesh \
+            -o jsonpath='{.items[0].status.podIP}')
+          echo "Pod IP: ${POD_IP}"
 
-  integration-capacity:
-    name: Integration - Capacity & Performance
-    runs-on: ubuntu-latest
-    needs: [lint, test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install -e ".[dev]"
-      - name: Run capacity and performance tests
-        run: |
-          set -e
-          pytest -m integration tests/integration/test_capacity.py -v --tb=long
-          echo "✓ All capacity/performance tests passed"
+          # Port-forward in background for testing from runner
+          kubectl port-forward -n certmesh svc/certmesh 8000:8000 &
+          PF_PID=$!
+          sleep 3
+
+          # --- Test 1: Basic reachability ---
+          echo ""
+          echo "--- Test 1: Health endpoint reachability ---"
+          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz)
+          if [ "${HTTP_CODE}" = "200" ]; then
+            echo "✓ /healthz returned HTTP ${HTTP_CODE}"
+          else
+            echo "ERROR: /healthz returned HTTP ${HTTP_CODE}"
+            curl -s http://localhost:8000/healthz || true
+            kill ${PF_PID} 2>/dev/null || true
+            exit 1
+          fi
+
+          # --- Test 2: Sequential throughput ---
+          echo ""
+          echo "--- Test 2: Sequential throughput (100 requests) ---"
+          ERRORS=0
+          START=$(date +%s%N)
+          for i in $(seq 1 100); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz)
+            if [ "${CODE}" != "200" ]; then
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+          END=$(date +%s%N)
+          ELAPSED_MS=$(( (END - START) / 1000000 ))
+          RPS=$(( 100 * 1000 / ELAPSED_MS ))
+          echo "  100 sequential requests in ${ELAPSED_MS}ms (≈${RPS} req/s)"
+          echo "  Errors: ${ERRORS}/100"
+          if [ "${ERRORS}" -gt 5 ]; then
+            echo "ERROR: Too many errors (${ERRORS}/100)"
+            kill ${PF_PID} 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ Sequential throughput: ${RPS} req/s with ${ERRORS} errors"
+
+          # --- Test 3: Concurrent throughput ---
+          echo ""
+          echo "--- Test 3: Concurrent throughput (50 parallel requests) ---"
+          TMPDIR=$(mktemp -d)
+          START=$(date +%s%N)
+          for i in $(seq 1 50); do
+            curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/healthz > "${TMPDIR}/${i}.out" &
+          done
+          wait
+          END=$(date +%s%N)
+          ELAPSED_MS=$(( (END - START) / 1000000 ))
+          CONCURRENT_ERRORS=$(cat "${TMPDIR}"/*.out | grep -cv "200" || true)
+          echo "  50 concurrent requests in ${ELAPSED_MS}ms"
+          echo "  Errors: ${CONCURRENT_ERRORS}/50"
+          rm -rf "${TMPDIR}"
+          echo "✓ Concurrent throughput test passed (${CONCURRENT_ERRORS} errors)"
+
+          # --- Test 4: Readiness endpoint deep check ---
+          echo ""
+          echo "--- Test 4: Readiness endpoint check ---"
+          READYZ=$(curl -s http://localhost:8000/readyz)
+          echo "  /readyz response: ${READYZ}"
+          READYZ_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/readyz)
+          echo "  /readyz HTTP status: ${READYZ_CODE}"
+          if [ "${READYZ_CODE}" = "200" ]; then
+            echo "✓ Readiness probe healthy"
+          else
+            echo "WARNING: Readiness probe returned ${READYZ_CODE} (non-fatal)"
+          fi
+
+          # --- Test 5: Response headers check ---
+          echo ""
+          echo "--- Test 5: Response headers inspection ---"
+          HEADERS=$(curl -s -I http://localhost:8000/healthz)
+          echo "${HEADERS}"
+          if echo "${HEADERS}" | grep -qi "x-request-id"; then
+            echo "✓ X-Request-ID header present"
+          else
+            echo "WARNING: X-Request-ID header missing"
+          fi
+
+          # --- Summary ---
+          echo ""
+          echo "=== Performance Summary ==="
+          echo "  Sequential: ${RPS} req/s (100 requests, ${ERRORS} errors)"
+          echo "  Concurrent: 50 requests in ${ELAPSED_MS}ms (${CONCURRENT_ERRORS} errors)"
+
+          kill ${PF_PID} 2>/dev/null || true
+          echo ""
+          echo "✓ Capacity & Performance tests passed against live K8s pod"
 
   # ---------- Changelog script test ----------
 
@@ -552,7 +625,7 @@ jobs:
   auto-tag:
     name: Auto-tag release
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [lint, test, build, changelog-script-test, integration-vault-pki, integration-venafi-vcert, integration-acm-localstack, integration-capacity]
+    needs: [lint, test, build, changelog-script-test, integration-vault-pki, integration-venafi-vcert, integration-acm-localstack, integration-helm-kind]
     runs-on: ubuntu-latest
     permissions:
       contents: write

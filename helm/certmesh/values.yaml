@@ -122,7 +122,7 @@ letsencrypt:
 vault:
   enabled: true
   url: "https://vault.example.com"
-  authMethod: "approle"  # "approle" | "ldap" | "aws_iam"
+  authMethod: "approle"  # "approle" | "kubernetes" | "ldap" | "aws_iam"
   kvVersion: 2
   tls:
     verify: true
@@ -144,13 +144,23 @@ secretsManager:
   enabled: false
   region: "us-east-1"
 
+
+# =============================================================================
+# 4. AUTHENTICATION & ACCESS
+# =============================================================================
+
+# --- OAuth2 / OIDC ---
+oauth2:
+  enabled: true
+  issuerUrl: ""
+  audience: ""
+  jwksUri: ""
+  requiredScopes: ""
+  providerHint: "generic"  # "generic" | "auth0" | "keycloak" | "okta"
+
 # --- API Key Exchange ---
 # Exchange a valid JWT Bearer token for a short-lived API key via:
 #   POST /api/v1/auth/token { "ttl_seconds": 900 }
-#
-# The API key is returned once and can be used in subsequent requests via
-# the X-API-Key header. When the key nears expiry, the response includes
-# X-CertMesh-Key-Expiring: true to signal the client to re-authenticate.
 #
 # Flow:
 #   1. Client authenticates with JWT → POST /api/v1/auth/token
@@ -160,15 +170,13 @@ secretsManager:
 #   5. Client obtains new JWT and exchanges again
 apiKey:
   enabled: true
-  defaultTtlSeconds: 900        # 15 minutes — default key lifetime
-  maxTtlSeconds: 28800          # 8 hours — maximum allowed key lifetime
+  defaultTtlSeconds: 900        # 15 minutes
+  maxTtlSeconds: 28800          # 8 hours
   maxActiveKeys: 10000          # safeguard against memory exhaustion
   maxKeysPerSubject: 5          # max concurrent keys per JWT subject/client
 
 # --- Rate Limiting / Throttling ---
 # Configurable rate limiting returning HTTP 429 with Retry-After header.
-# Defaults are intentionally high to protect without restricting normal use.
-#
 # Limit string format: "<count>/<period>"
 #   e.g. "1000/minute", "100/second", "5000/hour"
 rateLimit:
@@ -176,9 +184,14 @@ rateLimit:
   defaultLimit: "1000/minute"   # overall per-client limit
   burstLimit: "100/second"      # per-second burst protection
 
-# --- API Server ---
+
+# =============================================================================
+# 5. API SERVER
+# =============================================================================
+
 api:
-  workers: 4
+  # "auto" = 2 × CPU cores + 1 (gunicorn default). Set to an integer to override.
+  workers: "auto"
   timeout: 120
   maxRequestSize: "1048576"  # 1 MB
   corsOrigins: ""
@@ -188,13 +201,11 @@ api:
 # Direct TLS termination at the certmesh API server.
 # For Kubernetes deployments, TLS is typically handled by:
 #   1. Ingress controller (nginx, traefik, ALB) — preferred
-#   2. Vault PKI init container (vaultPkiTls section above)
+#   2. Vault PKI init container (section 6)
 #   3. cert-manager + vaultPkiTls.method=certManager
 #
 # Enable this only for bare-metal / VM deployments without a reverse proxy.
-#
-# TLS protocol: TLS 1.3 preferred, TLS 1.2 as fallback.
-# Cipher suites follow Mozilla "Intermediate" compatibility (strong defaults).
+# TLS 1.3 preferred, TLS 1.2 as fallback.
 tls:
   enabled: false
   certFile: "/etc/tls/tls.crt"
@@ -202,56 +213,27 @@ tls:
   caFile: "/etc/tls/ca.crt"
   minVersion: "TLSv1.2"
   maxVersion: "TLSv1.3"
-  # TLS 1.2 cipher suites (TLS 1.3 ciphers managed by OpenSSL, cannot be disabled).
-  # Mozilla "Intermediate" compatibility — strong defaults, wide client support.
-  ciphers: >-
-    ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256
+  # TLS 1.2 cipher suites — Mozilla "Intermediate" compatibility.
+  # TLS 1.3 ciphers are managed by OpenSSL and cannot be overridden.
+  ciphers:
+    - "ECDHE-ECDSA-AES256-GCM-SHA384"
+    - "ECDHE-RSA-AES256-GCM-SHA384"
+    - "ECDHE-ECDSA-CHACHA20-POLY1305"
+    - "ECDHE-RSA-CHACHA20-POLY1305"
+    - "ECDHE-ECDSA-AES128-GCM-SHA256"
+    - "ECDHE-RSA-AES128-GCM-SHA256"
+    - "DHE-RSA-AES256-GCM-SHA384"
+    - "DHE-RSA-AES128-GCM-SHA256"
   honorCipherOrder: true        # server chooses cipher preference
   sessionTickets: false         # disabled for forward secrecy
 
 # --- HTTP Keep-Alive ---
-# Keep-alive settings for persistent HTTP connections.
 keepAlive:
   timeout: 75                   # seconds before idle connection is closed (matches nginx)
   maxRequests: 1000             # max requests per persistent connection
 
 # --- Response Compression ---
 # GZip compression for API responses. Reduces bandwidth for JSON payloads.
-# Enabled by default; disable if your reverse proxy handles compression.
-compression:
-  enabled: true
-  minimumSize: 500              # bytes — only compress responses >= this size
-  level: 6                      # gzip level 1-9 (6 = good balance of speed/ratio)
-
-# --- Horizontal Pod Autoscaling ---
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilization: 70
-  targetMemoryUtilization: 80
-  requestRate:
-    enabled: false
-    targetRequestsPerSecond: 50
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 30
-      policies:
-        - type: Pods
-          value: 2
-          periodSeconds: 60
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-        - type: Percent
-          value: 25
-          periodSeconds: 120
-
-keepAlive:
-  timeout: 75                   # seconds before idle connection is closed (matches nginx)
-  maxRequests: 1000             # max requests per persistent connection
-
-# GZip compression for API responses.
 # Disable if your reverse proxy already handles compression.
 compression:
   enabled: true
@@ -297,6 +279,9 @@ vaultPkiTls:
   #   "certManager"   — cert-manager provisions the cert as a K8s Secret; the
   #                     deployment just mounts it (requires cert-manager + Issuer)
   method: "initContainer"
+
+  # Docker image for the init container (must include vault CLI).
+  vaultImage: "hashicorp/vault:1.21"
 
   # cert-manager settings (only when method=certManager):
   certManagerSecretName: "certmesh-tls"
@@ -349,15 +334,6 @@ service:
   # AWS NLB annotations — active by default. For non-AWS deployments, set
   # service.annotations={} to clear these.  Change service.type to LoadBalancer
   # to activate the NLB.
-  #
-  # AWS NLB Security Group (uncomment to restrict inbound traffic):
-  #   service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-0123456789abcdef0"
-  #   # OR let the AWS LB Controller create a managed SG:
-  #   service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
-  #
-  # external-dns annotation (uncomment to create DNS records automatically):
-  #   external-dns.alpha.kubernetes.io/hostname: "certmesh.internal.example.com"
-  #   external-dns.alpha.kubernetes.io/ttl: "300"
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
@@ -399,114 +375,22 @@ ingress:
 
 networkPolicy:
   enabled: true
-  # --- Ingress rules (inbound traffic to certmesh) ---
-  # By default only allows traffic from within the same namespace.
+  # Ingress rules: by default allows traffic from within the same namespace.
   # Set ingressCIDRs to restrict by IP range (e.g. private network only).
-  # Set allowedNamespaces to allow cross-namespace access from specific namespaces.
-  #
-  # Example: allow only internal RFC 1918 networks:
-  #   ingressCIDRs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
-  #
-  # Example: allow specific namespaces:
-  #   allowedNamespaces: ["monitoring", "ingress-nginx", "istio-system"]
+  # Set allowedNamespaces to allow cross-namespace access.
   ingressCIDRs: []
-    # - "10.0.0.0/8"         # AWS VPC default
-    # - "172.16.0.0/12"      # Private network
-    # - "192.168.0.0/16"     # Private network
-  # Kubernetes namespaces allowed to reach certmesh on the service port.
-  # Leave empty to allow only same-namespace traffic (default).
-  # Add namespace names to permit cross-namespace ingress.
+    # - "10.0.0.0/8"
+    # - "172.16.0.0/12"
+    # - "192.168.0.0/16"
   allowedNamespaces: []
-    # - "monitoring"          # Prometheus scraping
-    # - "ingress-nginx"       # Ingress controller
-    # - "istio-system"        # Service mesh
-  # Application ports open for inbound traffic
+    # - "monitoring"
+    # - "ingress-nginx"
+    # - "istio-system"
   ingressPorts:
     - port: 8000
       protocol: TCP
-  # --- Egress rules (outbound traffic from certmesh) ---
-  # Allowed egress destinations
   egressCIDRs:
     - "0.0.0.0/0"  # Override with specific CIDRs in production
-
-# --- Vault PKI TLS Auto-Issuance ---
-# When enabled, an init container runs before the main certmesh container to:
-#   1. Authenticate to Vault (AppRole, Kubernetes, or AWS IAM)
-#   2. Issue a leaf TLS certificate from the intermediate PKI engine
-#   3. Fetch the intermediate CA cert from the intermediate PKI engine
-#   4. Fetch the root CA cert from the root PKI engine
-#   5. Build a full CA bundle (intermediate + root) for TLS verification
-#   6. Write cert, key, and CA bundle to a shared emptyDir volume
-#
-# Prerequisites:
-#   - Vault PKI engines mounted (e.g. pki/ for root, pki_int/ for intermediate)
-#   - A role configured on the issuing PKI engine allowing the CN and SANs
-#   - Vault auth method granting access to the PKI engines
-#
-# Example Vault PKI setup:
-#   # Root CA
-#   vault secrets enable -path=pki pki
-#   vault write pki/root/generate/internal common_name="Example Root CA" ttl=87600h
-#
-#   # Intermediate CA
-#   vault secrets enable -path=pki_int pki
-#   vault write -format=json pki_int/intermediate/generate/internal \
-#     common_name="Example Intermediate CA" | jq -r '.data.csr' > int.csr
-#   vault write -format=json pki/root/sign-intermediate csr=@int.csr ttl=43800h \
-#     | jq -r '.data.certificate' > int.crt
-#   vault write pki_int/intermediate/set-signed certificate=@int.crt
-#
-#   # Role for certmesh server certs
-#   vault write pki_int/roles/certmesh-server \
-#     allowed_domains="internal.example.com" allow_subdomains=true max_ttl="720h"
-vaultPkiTls:
-  enabled: false
-  # --- TLS provisioning method ---
-  # "initContainer" : (default) the built-in init container issues a fresh cert
-  #                    from Vault PKI on every pod start (zero external dependencies)
-  # "certManager"   : cert-manager's vault-issuer provisions the cert as a K8s
-  #                    Secret; the deployment just mounts the Secret. You must
-  #                    install cert-manager and create a ClusterIssuer / Issuer
-  #                    pointing to the Vault PKI engine before enabling this.
-  #
-  # Restrict by IP range (e.g. private networks only):
-  #   ingressCIDRs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
-  #
-  # Example Certificate resource:
-  #   apiVersion: cert-manager.io/v1
-  #   kind: Certificate
-  #   metadata:
-  #     name: certmesh-tls
-  #   spec:
-  #     secretName: certmesh-tls
-  #     issuerRef:
-  #       name: vault-pki-issuer
-  #       kind: ClusterIssuer
-  #     commonName: certmesh.internal.example.com
-  #     dnsNames:
-  #       - certmesh.internal.example.com
-  method: "initContainer"        # "initContainer" or "certManager"
-  # --- cert-manager settings (only when method=certManager) ---
-  # When using cert-manager, provide the Secret name that cert-manager populates.
-  # cert-manager handles renewal automatically via its own controller.
-  certManagerSecretName: "certmesh-tls"  # K8s Secret created by cert-manager Certificate resource
-  certType: "leaf"               # "leaf" = server certificate
-  # --- Issuing PKI engine (issues the leaf cert — used by initContainer method) ---
-  mountPoint: "pki_int"          # Vault PKI mount for issuing certs (typically intermediate)
-  roleName: "certmesh-server"    # Role name on the issuing PKI engine
-  commonName: "certmesh.internal.example.com"
-  sans: []                       # e.g. ["certmesh-0.internal.example.com"]
-  ttl: "8760h"                   # 365 days
-  # --- CA chain: intermediate + root (used by initContainer method) ---
-  # The init container fetches CA certs from these PKI engines and
-  # concatenates them into a single ca-bundle.crt (intermediate first, root last).
-  intermediateMountPoint: "pki_int"  # PKI mount that has the intermediate CA cert
-  rootMountPoint: "pki"              # PKI mount that has the root CA cert
-  fetchCaChain: true                 # Set to false to use only the issuing_ca from the cert response
-  # --- Mount paths inside the container ---
-  certPath: "/etc/tls/tls.crt"
-  keyPath: "/etc/tls/tls.key"
-  caPath: "/etc/tls/ca.crt"      # full CA bundle (intermediate + root)
 
 
 # =============================================================================

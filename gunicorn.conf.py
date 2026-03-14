@@ -2,12 +2,32 @@
 
 import multiprocessing
 import os
+import sys
 
 # Server socket
 bind = os.environ.get("CM_API_BIND", "0.0.0.0:8000")
 
+# ---------------------------------------------------------------------------
 # Worker processes
-workers = int(os.environ.get("CM_API_WORKERS", 2 * multiprocessing.cpu_count() + 1))
+# ---------------------------------------------------------------------------
+# CM_API_WORKERS controls worker count:
+#   "auto" (default) -- 2 x CPU cores + 1 (gunicorn recommended formula)
+#   integer          — explicit override (e.g. "4")
+#
+# In containerised environments, multiprocessing.cpu_count() respects the
+# cgroup CPU quota, so "auto" works correctly under resource limits.
+_raw_workers = os.environ.get("CM_API_WORKERS", "auto")
+if _raw_workers.lower() in ("auto", "0", ""):
+    _cpu_count = multiprocessing.cpu_count()
+    workers = 2 * _cpu_count + 1
+    print(
+        f"[gunicorn.conf] Auto-detected {_cpu_count} CPU(s) → {workers} workers",
+        file=sys.stderr,
+    )
+else:
+    workers = int(_raw_workers)
+    print(f"[gunicorn.conf] Worker count override → {workers} workers", file=sys.stderr)
+
 worker_class = "uvicorn.workers.UvicornWorker"
 worker_connections = 1000
 
