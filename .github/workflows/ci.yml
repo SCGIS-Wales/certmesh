@@ -581,12 +581,17 @@ jobs:
           echo ""
           echo "--- Test 3: Concurrent throughput (20 parallel requests) ---"
           CONC_DIR=$(mktemp -d)
+          CURL_PIDS=""
           START=$(date +%s%N)
           for i in $(seq 1 20); do
             ${CURL} -o /dev/null -w '%{http_code}\n' http://localhost:8000/healthz \
               > "${CONC_DIR}/${i}.out" 2>/dev/null &
+            CURL_PIDS="${CURL_PIDS} $!"
           done
-          wait
+          # Wait only for curl processes (NOT port-forward which runs forever)
+          for pid in ${CURL_PIDS}; do
+            wait "${pid}" 2>/dev/null || true
+          done
           END=$(date +%s%N)
           CONC_MS=$(( (END - START) / 1000000 ))
           CONC_ERRORS=$(cat "${CONC_DIR}"/*.out | grep -cv "200" || true)
