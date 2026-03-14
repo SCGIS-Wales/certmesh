@@ -1,0 +1,98 @@
+{{- if .Values.certRenewal.enabled -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "certmesh.fullname" . }}-renewal
+  labels:
+    {{- include "certmesh.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.certRenewal.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "certmesh.labels" . | nindent 8 }}
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "certmesh.selectorLabels" . | nindent 12 }}
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "certmesh.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          containers:
+            - name: renewal
+              image: {{ include "certmesh.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              command:
+                - certmesh
+                - renewal
+                - check
+                - --provider
+                - {{ .Values.certRenewal.provider | default "all" | quote }}
+                - --before-expiry
+                - {{ .Values.certRenewal.beforeExpiry | default 30 | quote }}
+                - --unit
+                - {{ .Values.certRenewal.unit | default "day" | quote }}
+              env:
+                - name: CM_CONFIG_FILE
+                  value: /config/config.yaml
+                {{- if .Values.vault.enabled }}
+                - name: CM_VAULT_URL
+                  value: {{ .Values.vault.url | quote }}
+                - name: CM_VAULT_AUTH_METHOD
+                  value: {{ .Values.vault.authMethod | quote }}
+                {{- if eq .Values.vault.authMethod "approle" }}
+                {{- if .Values.vault.approle.existingSecret }}
+                - name: CM_VAULT_ROLE_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.vault.approle.existingSecret }}
+                      key: {{ .Values.vault.approle.roleIdKey }}
+                - name: CM_VAULT_SECRET_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.vault.approle.existingSecret }}
+                      key: {{ .Values.vault.approle.secretIdKey }}
+                {{- end }}
+                {{- end }}
+                {{- end }}
+                {{- if .Values.acm.enabled }}
+                - name: CM_ACM_REGION
+                  value: {{ .Values.acm.region | quote }}
+                {{- end }}
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "certmesh.fullname" . }}-config
+          restartPolicy: OnFailure
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
