@@ -6,11 +6,10 @@ FastAPI application factory with lifespan context manager.
 
 Production entrypoint (gunicorn)::
 
-    gunicorn certmesh.api.app:create_app \\
+    gunicorn 'certmesh.api.app:create_app()' \\
         --worker-class uvicorn.workers.UvicornWorker \\
         --workers 4 \\
-        --bind 0.0.0.0:8000 \\
-        --factory
+        --bind 0.0.0.0:8000
 """
 
 from __future__ import annotations

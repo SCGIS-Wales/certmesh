@@ -44,6 +44,6 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD ["curl", "-f", "http://localhost:8000/healthz"]
 
 # Production entrypoint: gunicorn with uvicorn workers
-ENTRYPOINT ["gunicorn", "certmesh.api.app:create_app", \
-    "--config", "/app/gunicorn.conf.py", \
-    "--factory"]
+# Uses callable syntax create_app() — gunicorn imports the function then calls it.
+ENTRYPOINT ["gunicorn", "certmesh.api.app:create_app()", \
+    "--config", "/app/gunicorn.conf.py"]
