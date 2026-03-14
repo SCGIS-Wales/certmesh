@@ -80,20 +80,25 @@ class DigiCertAuthenticationError(DigiCertError):
 
 
 class DigiCertRateLimitError(DigiCertError):
-    """Raised when the DigiCert API rate limit is exceeded (HTTP 429)."""
+    """Raised when the DigiCert API rate limit is exceeded (HTTP 429).
 
-    def __init__(self, message: str, retry_after: str = "") -> None:
+    DigiCert enforces 1 000 req/3 min and 100 req/5 s but does **not**
+    return ``Retry-After`` headers.  The ``retry_after`` attribute carries
+    a fixed default backoff (``"60"`` seconds) rather than a parsed header.
+    """
+
+    def __init__(self, message: str, retry_after: str = "60") -> None:
         super().__init__(message)
         self.retry_after = retry_after
 
     def retry_after_seconds(self) -> float | None:
-        """Parse the Retry-After header value into seconds, or None if absent/unparsable."""
+        """Return the backoff period in seconds (fixed 60s default)."""
         if not self.retry_after:
-            return None
+            return 60.0
         try:
             return float(self.retry_after)
         except ValueError:
-            return None
+            return 60.0
 
 
 class DigiCertAPIError(DigiCertError):

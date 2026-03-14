@@ -328,6 +328,8 @@ class TestEnhancedErrorMessages:
         assert "endpoint=" in msg
         assert "Remediation" in msg
         assert "API key" in msg
+        assert "do not expire" in msg
+        assert "not expired" not in msg  # API keys never expire per spec
 
     def test_404_includes_endpoint_and_remediation(self) -> None:
         resp = _mock_response(
@@ -341,19 +343,19 @@ class TestEnhancedErrorMessages:
         assert "orders/99999" in msg
         assert "Remediation" in msg
 
-    def test_429_includes_retry_after_and_remediation(self) -> None:
+    def test_429_uses_fixed_backoff_and_remediation(self) -> None:
+        """DigiCert does NOT return Retry-After headers; fixed 60s backoff is used."""
         resp = _mock_response(
             status_code=429,
             text="Rate limited",
-            headers={"Retry-After": "30"},
             request_id="rate-rid",
         )
         with pytest.raises(DigiCertRateLimitError) as exc_info:
             _raise_for_digicert_error(resp)
         msg = str(exc_info.value)
         assert "rate-rid" in msg
-        assert "Retry-After=30" in msg
-        assert "Remediation" in msg
+        assert "1000 req/3min" in msg
+        assert "60s backoff" in msg
 
     def test_500_includes_status_page_hint(self) -> None:
         resp = _mock_response(status_code=500, text="Internal Server Error")
@@ -383,7 +385,7 @@ class TestEnhancedErrorMessages:
 
 
 class TestRateLimitRetryAfter:
-    """Test Retry-After header parsing."""
+    """Test fixed backoff since DigiCert does NOT return Retry-After headers."""
 
     def test_numeric_value(self) -> None:
         err = DigiCertRateLimitError("rate limited", retry_after="30")
@@ -393,17 +395,21 @@ class TestRateLimitRetryAfter:
         err = DigiCertRateLimitError("rate limited", retry_after="2.5")
         assert err.retry_after_seconds() == 2.5
 
-    def test_empty_string(self) -> None:
+    def test_empty_string_returns_default(self) -> None:
+        """Empty retry_after returns 60s default, not None."""
         err = DigiCertRateLimitError("rate limited", retry_after="")
-        assert err.retry_after_seconds() is None
+        assert err.retry_after_seconds() == 60.0
 
-    def test_no_retry_after(self) -> None:
+    def test_default_retry_after_is_60(self) -> None:
+        """Default backoff is 60s since DigiCert doesn't return Retry-After."""
         err = DigiCertRateLimitError("rate limited")
-        assert err.retry_after_seconds() is None
+        assert err.retry_after == "60"
+        assert err.retry_after_seconds() == 60.0
 
-    def test_unparseable_value(self) -> None:
+    def test_unparseable_value_returns_default(self) -> None:
+        """Unparseable values fall back to 60s default."""
         err = DigiCertRateLimitError("rate limited", retry_after="not-a-number")
-        assert err.retry_after_seconds() is None
+        assert err.retry_after_seconds() == 60.0
 
     def test_retry_after_stored_on_exception(self) -> None:
         err = DigiCertRateLimitError("msg", retry_after="60")

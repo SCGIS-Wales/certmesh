@@ -6,7 +6,24 @@ DigiCert CertCentral Services API v2 client supporting the full
 certificate lifecycle: list, search, describe, order, download,
 revoke, and duplicate.
 
-API reference: https://dev.digicert.com/en/certcentral-apis.html
+API reference
+    https://dev.digicert.com/en/certcentral-apis.html
+Base URL
+    ``https://www.digicert.com/services/v2``
+EU base URL
+    ``https://certcentral.eu.digicert.com/services/v2``
+Authentication
+    ``X-DC-DEVKEY`` header carrying a CertCentral API key.
+    API keys **do not expire**; they can be revoked via
+    *CertCentral → Automation → API Keys*.
+Rate limits
+    * 1 000 requests per 3 minutes (global)
+    * 100 requests per 5 seconds (burst)
+    * **No rate-limit headers** are returned by the API.
+Certificate validity
+    Max 199 days (as of Feb 2026; dropping to 100 days from Mar 2027).
+    Use the ``order_validity`` object (``years`` or ``days`` key) instead
+    of the legacy ``validity_years`` / ``validity_days`` top-level fields.
 """
 
 from __future__ import annotations
@@ -54,13 +71,15 @@ JsonDict = dict[str, Any]
 # DigiCert date format used in most API responses.
 _DIGICERT_DATE_FMT = "%Y-%m-%d"
 
-# Valid DigiCert revocation reasons.
+# Valid DigiCert revocation reasons per CertCentral API v2 spec.
+# Ref: PUT /certificate/{id}/revoke — ``revocation_reason`` field.
+# NOTE: ``ca_compromise`` is NOT a valid CertCentral reason.
+# NOTE: The spec uses ``affiliation_change`` (no trailing "d").
 _VALID_REVOCATION_REASONS: frozenset[str] = frozenset(
     {
         "unspecified",
         "key_compromise",
-        "ca_compromise",
-        "affiliation_changed",
+        "affiliation_change",
         "superseded",
         "cessation_of_operation",
     }
@@ -74,7 +93,17 @@ _VALID_REVOCATION_REASONS: frozenset[str] = frozenset(
 
 @dataclass(slots=True, frozen=True)
 class OrderRequest:
-    """Parameters for a new DigiCert CertCentral certificate order."""
+    """Parameters for a new DigiCert CertCentral certificate order.
+
+    Spec reference: ``POST /order/certificate/{product_name_id}``
+
+    The ``order_validity`` object (either ``years`` or ``days``) replaces the
+    legacy ``validity_years`` / ``validity_days`` top-level fields.  When
+    ``validity_days`` is set it takes precedence over ``validity_years``.
+
+    ``skip_approval`` must be ``True`` for automated (non-interactive)
+    workflows — otherwise the order is held for admin approval.
+    """
 
     common_name: str
     san_dns_names: list[str] = field(default_factory=list)
@@ -85,10 +114,14 @@ class OrderRequest:
     locality: str = ""
     product_name_id: str = "ssl_plus"
     validity_years: int = 1
+    validity_days: int | None = None  # Alternative: max 199 days (Feb 2026 policy)
     signature_hash: str = "sha256"
     organization_id: int | None = None
     key_size: int = 4096
     comments: str = ""
+    payment_method: str = "balance"  # "balance" (account) or "card"
+    skip_approval: bool = True  # bypass admin approval for automation
+    dcv_method: str = ""  # "dns-txt-token", "dns-cname-token", "email", "http-token"
 
 
 @dataclass(slots=True, frozen=True)
@@ -277,10 +310,11 @@ def _raise_for_digicert_error(resp: requests.Response) -> None:
     Every error message includes the request ID, endpoint URL, and a
     remediation hint so that operators can quickly identify the root cause.
 
-    * 401 / 403 -> ``DigiCertAuthenticationError``
-    * 404       -> ``DigiCertOrderNotFoundError``
-    * 429       -> ``DigiCertRateLimitError`` (honours *Retry-After* header)
-    * 4xx / 5xx -> ``DigiCertAPIError``
+    * 401 / 403 → ``DigiCertAuthenticationError``
+    * 404       → ``DigiCertOrderNotFoundError``
+    * 429       → ``DigiCertRateLimitError`` (fixed 60s backoff; DigiCert
+      does **not** return ``Retry-After`` headers)
+    * 4xx / 5xx → ``DigiCertAPIError``
     """
     if resp.ok:
         return
@@ -294,8 +328,10 @@ def _raise_for_digicert_error(resp: requests.Response) -> None:
         raise DigiCertAuthenticationError(
             f"DigiCert authentication failed (HTTP {status}). "
             f"endpoint={endpoint}, request_id={request_id}. "
-            "Remediation: verify your API key is valid and not expired — "
-            "check CM_DIGICERT_API_KEY or the Vault path in "
+            "Remediation: verify your API key is valid and has the required "
+            "permissions — DigiCert API keys do not expire but can be "
+            "revoked in CertCentral > Automation > API Keys. "
+            "Check CM_DIGICERT_API_KEY or the Vault path in "
             "vault.paths.digicert_api_key."
         )
 
@@ -309,18 +345,26 @@ def _raise_for_digicert_error(resp: requests.Response) -> None:
         )
 
     if status == 429:
-        retry_after = resp.headers.get("Retry-After", "")
+        # DigiCert does NOT return Retry-After headers.
+        # Rate limits: 1000 req/3min (global), 100 req/5s (burst).
+        # Use a fixed 60s backoff as a safe default.
+        default_backoff = "60"
         logger.warning(
             "DigiCert rate limit hit (HTTP 429).",
-            extra={"retry_after": retry_after, "request_id": request_id, "endpoint": endpoint},
+            extra={
+                "retry_after_seconds": default_backoff,
+                "request_id": request_id,
+                "endpoint": endpoint,
+            },
         )
         raise DigiCertRateLimitError(
             f"DigiCert rate limit exceeded (HTTP 429). "
-            f"endpoint={endpoint}, request_id={request_id}, "
-            f"Retry-After={retry_after or 'not set'}. "
-            "Remediation: reduce request frequency or wait for the "
-            "Retry-After period before retrying.",
-            retry_after=retry_after,
+            f"endpoint={endpoint}, request_id={request_id}. "
+            "DigiCert enforces 1000 req/3min and 100 req/5s limits "
+            "but does not return rate-limit headers. "
+            f"Using fixed {default_backoff}s backoff. "
+            "Remediation: reduce request frequency and add jitter.",
+            retry_after=default_backoff,
         )
 
     raise DigiCertAPIError(
@@ -561,8 +605,9 @@ def list_issued_certificates(
 ) -> list[IssuedCertificateSummary]:
     """Retrieve all issued certificates from CertCentral, with optional filtering.
 
-    Server-side filters are applied where the API supports them (``status``);
-    expiry-based filters are applied client-side after retrieval.
+    Spec: ``GET /order/certificate`` with ``limit`` / ``offset`` pagination.
+    Server-side filters: ``filters[status]``.
+    Client-side filters: ``expires_before``, ``expires_after``.
 
     Args:
         digicert_cfg: The ``digicert`` section of the application config.
@@ -659,6 +704,9 @@ def search_certificates(
     max_pages: int = 50,
 ) -> list[IssuedCertificateSummary]:
     """Search certificates using server-side and client-side filters.
+
+    Spec: ``GET /order/certificate`` with ``filters[common_name]``,
+    ``filters[serial_number]``, ``filters[status]`` query parameters.
 
     Server-side filters forwarded to the API: ``common_name``,
     ``serial_number``, ``status``.
@@ -847,6 +895,9 @@ def download_issued_certificate(
 ) -> CertificateBundle:
     """Download an issued certificate from DigiCert in ``pem_all`` ZIP format.
 
+    Spec: ``GET /certificate/{certificate_id}/download/platform``
+    Format types: ``pem_all``, ``pem_noroot``, ``apache``, ``nginx``, etc.
+
     Args:
         digicert_cfg: The ``digicert`` section of the application config.
         vault_cfg: The ``vault`` section of the application config.
@@ -917,6 +968,12 @@ def order_and_await_certificate(
 ) -> CertificateBundle:
     """Submit a certificate order, poll until issued, then download the bundle.
 
+    Spec: ``POST /order/certificate/{product_name_id}``
+
+    The order body uses the ``order_validity`` object (``years`` or ``days``)
+    instead of the legacy ``validity_years`` field, sets ``skip_approval: true``
+    for automation, and includes ``payment_method``.
+
     Steps:
         1. Generate an RSA private key and CSR.
         2. Submit the order to ``POST /order/certificate/{product_name_id}``.
@@ -958,13 +1015,26 @@ def order_and_await_certificate(
     base = _base_url(digicert_cfg)
     url = f"{base}/order/certificate/{order_request.product_name_id}"
 
+    # Build the order body per CertCentral API v2 spec.
+    # Ref: POST /order/certificate/{product_name_id}
+    #
+    # ``order_validity`` replaces the legacy ``validity_years`` field.
+    # ``skip_approval`` is required for automated workflows.
+    # ``payment_method`` specifies how the order is charged.
+    if order_request.validity_days is not None:
+        order_validity: JsonDict = {"days": order_request.validity_days}
+    else:
+        order_validity = {"years": order_request.validity_years}
+
     order_body: JsonDict = {
         "certificate": {
             "common_name": order_request.common_name,
             "csr": csr_pem,
             "signature_hash": order_request.signature_hash,
         },
-        "validity_years": order_request.validity_years,
+        "order_validity": order_validity,
+        "payment_method": order_request.payment_method,
+        "skip_approval": order_request.skip_approval,
     }
 
     if order_request.san_dns_names:
@@ -972,6 +1042,9 @@ def order_and_await_certificate(
 
     if order_request.organization_id:
         order_body["organization"] = {"id": order_request.organization_id}
+
+    if order_request.dcv_method:
+        order_body["dcv_method"] = order_request.dcv_method
 
     if order_request.comments:
         order_body["comments"] = order_request.comments
@@ -1095,7 +1168,10 @@ def revoke_certificate(
 ) -> JsonDict:
     """Revoke a DigiCert certificate.
 
-    Calls ``PUT /certificate/{certificate_id}/revoke``.
+    Spec: ``PUT /certificate/{certificate_id}/revoke``
+
+    The request body uses ``revocation_reason`` (not ``reason``) per the
+    CertCentral API v2 spec, and sets ``skip_approval: true`` for automation.
 
     Either ``certificate_id`` or ``order_id`` must be supplied.  When only
     ``order_id`` is given the function fetches the order detail to resolve
@@ -1108,9 +1184,8 @@ def revoke_certificate(
         certificate_id: The DigiCert certificate ID.
         order_id: The DigiCert order ID (used to look up the certificate).
         reason: Revocation reason. One of: ``"unspecified"``,
-            ``"key_compromise"``, ``"ca_compromise"``,
-            ``"affiliation_changed"``, ``"superseded"``,
-            ``"cessation_of_operation"``.
+            ``"key_compromise"``, ``"affiliation_change"``,
+            ``"superseded"``, ``"cessation_of_operation"``.
         comments: Optional free-text comment attached to the request.
 
     Returns:
@@ -1146,7 +1221,14 @@ def revoke_certificate(
 
     url = f"{base}/certificate/{certificate_id}/revoke"
 
-    revoke_body: JsonDict = {"reason": reason}
+    # Build revocation body per CertCentral API v2 spec.
+    # Ref: PUT /certificate/{id}/revoke
+    # Field name is ``revocation_reason`` (not ``reason``).
+    # ``skip_approval`` bypasses admin approval for automated workflows.
+    revoke_body: JsonDict = {
+        "revocation_reason": reason,
+        "skip_approval": True,
+    }
     if comments:
         revoke_body["comments"] = comments
 
@@ -1233,7 +1315,7 @@ def duplicate_certificate(
 ) -> JsonDict:
     """Request a duplicate certificate for an existing order.
 
-    Calls ``POST /order/certificate/{order_id}/duplicate``.
+    Spec: ``POST /order/certificate/{order_id}/duplicate``
 
     A duplicate reuses the validation from the original order but issues
     a new certificate with a potentially different CSR, CN, or SANs.

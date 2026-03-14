@@ -110,10 +110,14 @@ class TestOrderRequest:
         assert req.country == "US"
         assert req.product_name_id == "ssl_plus"
         assert req.validity_years == 1
+        assert req.validity_days is None
         assert req.signature_hash == "sha256"
         assert req.organization_id is None
         assert req.key_size == 4096
         assert req.comments == ""
+        assert req.payment_method == "balance"
+        assert req.skip_approval is True
+        assert req.dcv_method == ""
 
     def test_custom_values(self) -> None:
         req = OrderRequest(
@@ -177,23 +181,17 @@ class TestRaiseForDigicertError:
         with pytest.raises(DigiCertRateLimitError, match="rate limit"):
             _raise_for_digicert_error(resp)
 
-    def test_429_with_retry_after_logs_and_raises(self) -> None:
+    def test_429_uses_fixed_backoff_no_retry_after_header(self) -> None:
+        """DigiCert does NOT return Retry-After headers; we use a fixed 60s backoff."""
         resp = _make_response(
             status_code=429,
             text="Too Many Requests",
-            headers={"Retry-After": "2"},
         )
-        with pytest.raises(DigiCertRateLimitError):
+        with pytest.raises(DigiCertRateLimitError) as exc_info:
             _raise_for_digicert_error(resp)
-
-    def test_429_with_non_numeric_retry_after(self) -> None:
-        resp = _make_response(
-            status_code=429,
-            text="Too Many Requests",
-            headers={"Retry-After": "not-a-number"},
-        )
-        with pytest.raises(DigiCertRateLimitError):
-            _raise_for_digicert_error(resp)
+        assert exc_info.value.retry_after == "60"
+        assert exc_info.value.retry_after_seconds() == 60.0
+        assert "1000 req/3min" in str(exc_info.value)
 
     def test_500_raises_api_error(self) -> None:
         resp = _make_response(status_code=500, text="Internal Server Error")
@@ -1136,6 +1134,12 @@ class TestOrderAndAwaitCertificate:
         assert body["certificate"]["dns_names"] == ["www.example.com"]
         assert body["organization"] == {"id": 9999}
         assert body["comments"] == "auto order"
+        # Spec compliance: order_validity replaces validity_years
+        assert "order_validity" in body
+        assert "validity_years" not in body
+        assert body["order_validity"] == {"years": 1}
+        assert body["skip_approval"] is True
+        assert body["payment_method"] == "balance"
 
 
 # =============================================================================
@@ -1166,7 +1170,8 @@ class TestRevokeCertificate:
 
         put_call = mock_session.put.call_args
         body = put_call.kwargs.get("json") or put_call[1].get("json", {})
-        assert body["reason"] == "key_compromise"
+        assert body["revocation_reason"] == "key_compromise"
+        assert body["skip_approval"] is True
         assert body["comments"] == "compromised key"
 
     @pytest.mark.usefixtures("_patch_build_session")
@@ -1250,8 +1255,7 @@ class TestRevokeCertificate:
         valid_reasons = [
             "unspecified",
             "key_compromise",
-            "ca_compromise",
-            "affiliation_changed",
+            "affiliation_change",
             "superseded",
             "cessation_of_operation",
         ]
