@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-
+### Changed
+- **README**: Add full REST API endpoint reference (DigiCert, Venafi, ACM, Vault PKI, Auth); update architecture section with spec-validated providers; add "Spec-compliant" feature bullet; update test count to 790+; update CI table with integration tests
 
 
 

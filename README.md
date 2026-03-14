@@ -13,7 +13,8 @@ A unified CLI and Python API for managing certificates across **DigiCert CertCen
 
 - **Multi-provider** -- single tool for DigiCert, Venafi TPP, Vault PKI, AWS ACM/ACM-PCA, and Let's Encrypt
 - **Full lifecycle** -- request, list, search, describe, download, renew, revoke, and export certificates
-- **REST API** -- production-grade FastAPI service with OAuth2 (ADFS / Azure Entra ID), Prometheus metrics
+- **REST API** -- production-grade FastAPI service with OAuth2 (ADFS / Azure Entra ID), Prometheus metrics, and full CRUD endpoints for all providers
+- **Spec-compliant** -- all provider API calls validated against official API reference documentation (DigiCert CertCentral v2, Venafi TPP v23/v25.3, AWS ACM)
 - **Credential security** -- secrets come from Vault (KV v1/v2) or environment variables, never from config files
 - **Resilient** -- circuit breakers, exponential-backoff retry, and configurable timeouts on all HTTP calls
 - **Configurable** -- layered config: built-in defaults < YAML file < `CM_*` environment variables
@@ -78,8 +79,8 @@ See [`config/config.yaml`](config/config.yaml) for the full annotated reference 
 | Provider | Method |
 |----------|--------|
 | **Vault** | AppRole (default), LDAP, or AWS IAM |
-| **DigiCert** | API key from `CM_DIGICERT_API_KEY` or Vault KV |
-| **Venafi** | OAuth2 or LDAP; credentials from `CM_VENAFI_USERNAME`/`CM_VENAFI_PASSWORD` or Vault KV |
+| **DigiCert** | API key from `CM_DIGICERT_API_KEY` or Vault KV (keys do not expire but can be revoked) |
+| **Venafi** | OAuth2 (TPP 20.1+, required 22.3+) or LDAP (pre-22.3 only); credentials from `CM_VENAFI_USERNAME`/`CM_VENAFI_PASSWORD` or Vault KV |
 | **AWS ACM** | Standard boto3 credential chain (IAM role, env vars, `~/.aws/credentials`) |
 | **Let's Encrypt** | ACME account key (auto-generated or provided) |
 
@@ -153,6 +154,65 @@ certmesh config show       # Display effective merged config (secrets redacted)
 certmesh config validate   # Validate config; exits 0 on success, 1 on failure
 ```
 
+## REST API
+
+The REST API provides the same operations as the CLI over HTTP. Start the API server with:
+
+```bash
+uvicorn certmesh.api.app:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+Base path: `/api/v1`. Health endpoints at `/healthz`, `/readyz`, `/livez`. Prometheus metrics at `/metrics`.
+
+### DigiCert Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/digicert/certificates` | List issued certificates |
+| `POST` | `/api/v1/digicert/certificates/search` | Search certificates by CN, status |
+| `GET` | `/api/v1/digicert/certificates/{id}` | Describe a certificate |
+| `POST` | `/api/v1/digicert/orders` | Order a new certificate |
+| `POST` | `/api/v1/digicert/certificates/{id}/revoke` | Revoke a certificate |
+
+### Venafi TPP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/venafi/certificates` | List managed certificates |
+| `POST` | `/api/v1/venafi/certificates/search` | Search by CN, SAN, thumbprint, serial, issuer |
+| `GET` | `/api/v1/venafi/certificates/{guid}` | Describe a certificate by GUID |
+| `POST` | `/api/v1/venafi/certificates/{guid}/renew` | Renew a certificate |
+| `POST` | `/api/v1/venafi/certificates/{guid}/revoke` | Revoke a certificate |
+
+### AWS ACM Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/acm/certificates` | List ACM certificates |
+| `POST` | `/api/v1/acm/certificates` | Request a new certificate |
+| `GET` | `/api/v1/acm/certificates/{arn}/detail` | Describe a certificate |
+| `GET` | `/api/v1/acm/certificates/{arn}/validation-records` | Get DNS/email validation records |
+| `POST` | `/api/v1/acm/certificates/{arn}/export` | Export certificate + private key (requires passphrase) |
+| `DELETE` | `/api/v1/acm/certificates/{arn}` | Delete a certificate |
+| `POST` | `/api/v1/acm/route53/sync` | Sync DNS validation records to Route53 |
+
+### Vault PKI Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/vault-pki/certificates` | List PKI certificates |
+| `POST` | `/api/v1/vault-pki/certificates` | Issue a new certificate |
+| `GET` | `/api/v1/vault-pki/certificates/{serial}` | Read a certificate by serial |
+| `POST` | `/api/v1/vault-pki/sign` | Sign a CSR |
+
+### Authentication Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/v1/auth/token` | Exchange JWT for short-lived API key |
+| `POST` | `/api/v1/auth/token/refresh` | Refresh API key |
+| `POST` | `/api/v1/auth/token/revoke` | Revoke API key |
+
 ## Architecture
 
 ```
@@ -164,9 +224,9 @@ certmesh/
   circuit_breaker.py    -- Thread-safe CLOSED/OPEN/HALF_OPEN state machine
   exceptions.py         -- Full exception hierarchy
   providers/
-    digicert_client.py  -- DigiCert CertCentral API v2
-    venafi_client.py    -- Venafi TPP API (OAuth2 + LDAP)
-    acm_client.py       -- AWS ACM + ACM-PCA (boto3)
+    digicert_client.py  -- DigiCert CertCentral API v2 (spec-validated)
+    venafi_client.py    -- Venafi TPP v23/v25.3 (OAuth2 + LDAP, spec-validated)
+    acm_client.py       -- AWS ACM + ACM-PCA (boto3, spec-validated)
     letsencrypt_client.py -- Let's Encrypt / ACME (RFC 8555)
   backends/
     vault_client.py     -- Vault auth + KV v1/v2 + PKI engine
@@ -318,7 +378,7 @@ When running on AWS (EKS with IRSA, EC2, or Lambda), the IAM role needs the foll
 
 ### Test Suite
 
-- **538+ tests** across the test suite
+- **790+ tests** across the test suite (including provider route handler tests)
 - **87%+ coverage** (80% minimum enforced in CI)
 - Tests use `pytest`, `pytest-mock`, `responses`, `moto`, and `freezegun`
 
@@ -331,7 +391,10 @@ GitHub Actions runs on every push and PR:
 | **lint** | Python 3.10 - 3.14 | `ruff check` + `ruff format --check` |
 | **test** | Python 3.10 - 3.14 | `pytest` with coverage |
 | **build** | Python 3.14 | `python -m build` + `twine check` |
-| **docker-build** | - | Docker image build + smoke test |
+| **Integration - Helm + kind** | - | Full K8s deployment with Vault TLS, health probes, and capacity tests |
+| **Integration - Vault PKI** | - | Vault PKI engine issue/sign/revoke against real Vault |
+| **Integration - Venafi (VCert)** | - | VCert SDK tests against mock TPP |
+| **CodeQL** | - | GitHub security analysis |
 | **auto-tag** | - | Auto-version bump and tag on merge to main |
 | **publish-pypi** | - | Publish to PyPI via trusted publisher |
 
