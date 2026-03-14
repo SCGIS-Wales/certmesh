@@ -108,8 +108,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             from certmesh.backends import vault_client as vc
 
-            client = vc.create_client(vault_cfg)
-            vc.authenticate(client, vault_cfg)
+            client = vc.get_authenticated_client(vault_cfg)
             app.state.vault_client = client
             logger.info(
                 "Vault client initialized and authenticated",

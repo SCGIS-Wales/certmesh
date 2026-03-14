@@ -199,20 +199,46 @@ class VenafiRevokeRequest(BaseModel):
 
 
 class VaultPKIIssueRequest(BaseModel):
+    """Request body for issuing a certificate via Vault PKI.
+
+    Spec reference: ``POST /v1/{mount}/issue/{role}``
+    ``alt_names`` and ``ip_sans`` are comma-joined before sending to Vault.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     common_name: str
     alt_names: list[str] = []
+    ip_sans: list[str] = []
     ttl: str = ""
 
 
 class VaultPKISignRequest(BaseModel):
+    """Request body for signing a CSR via Vault PKI.
+
+    Spec reference: ``POST /v1/{mount}/sign/{role}``
+    The private key never enters Vault — it stays with the caller.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
     csr_pem: str
     common_name: str
     alt_names: list[str] = []
+    ip_sans: list[str] = []
     ttl: str = ""
+
+
+class VaultPKIRevokeRequest(BaseModel):
+    """Request body for revoking a certificate via Vault PKI.
+
+    Spec reference: ``POST /v1/{mount}/revoke``
+    The serial_number must be colon-separated hex (e.g. ``3a:bc:12:...``).
+    """
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    serial_number: str
 
 
 class VaultPKICertificateResponse(BaseModel):
