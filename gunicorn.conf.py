@@ -48,6 +48,10 @@ loglevel = os.environ.get("CM_API_LOG_LEVEL", "info")
 # Preload app for faster worker start (shares memory via copy-on-write)
 preload_app = False
 
+# REL-06: Use tmpfs for worker heartbeat files to avoid disk I/O on container
+# overlay filesystems (prevents heartbeat timeout false positives).
+worker_tmp_dir = "/dev/shm"
+
 # Security: limit request sizes
 limit_request_line = 8190
 limit_request_fields = 100

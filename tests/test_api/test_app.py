@@ -53,7 +53,9 @@ class TestHealthEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
-        assert data["version"] == "3.0.0"
+        from certmesh import __version__
+
+        assert data["version"] == __version__
 
     def test_livez(self, client: TestClient) -> None:
         resp = client.get("/livez")

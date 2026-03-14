@@ -7,19 +7,24 @@ Configurable via ``CM_OAUTH2_*`` environment variables or Helm values.
 
 All authentication failures are logged as structured JSON with contextual
 fields for security auditing and log aggregation.
+
+SEC-01: Uses PyJWT (actively maintained) instead of python-jose (unmaintained,
+        CVE-2024-33664).
+SEC-02: JWKS cache is protected by a threading.Lock for multi-worker safety.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+import jwt as pyjwt
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +57,8 @@ class OAuth2Config:
         return f"{issuer}/.well-known/jwks.json"
 
 
-# Module-level JWKS cache
+# SEC-02: Thread-safe JWKS cache with lock
+_jwks_lock = threading.Lock()
 _jwks_cache: dict[str, Any] = {}
 _jwks_cache_time: float = 0.0
 _JWKS_CACHE_TTL: float = 3600.0  # 1 hour
@@ -60,44 +66,52 @@ _MIN_REFRESH_INTERVAL: float = 60.0  # max 1 refresh per minute
 
 
 def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
-    """Fetch and cache JWKS keys from the identity provider."""
+    """Fetch and cache JWKS keys from the identity provider (thread-safe)."""
     global _jwks_cache, _jwks_cache_time
 
     now = time.monotonic()
+
+    # Fast path: read cache without lock if still valid
     if not force and _jwks_cache and (now - _jwks_cache_time) < _JWKS_CACHE_TTL:
         return _jwks_cache
 
-    if force and (now - _jwks_cache_time) < _MIN_REFRESH_INTERVAL:
-        logger.warning(
-            "JWKS refresh throttled",
-            extra={"min_interval_seconds": _MIN_REFRESH_INTERVAL},
-        )
-        return _jwks_cache
+    with _jwks_lock:
+        # Re-check under lock (another thread may have refreshed)
+        now = time.monotonic()
+        if not force and _jwks_cache and (now - _jwks_cache_time) < _JWKS_CACHE_TTL:
+            return _jwks_cache
 
-    try:
-        resp = httpx.get(jwks_uri, timeout=10.0)
-        resp.raise_for_status()
-        _jwks_cache = resp.json()
-        _jwks_cache_time = now
-        logger.info(
-            "JWKS fetched",
-            extra={"jwks_uri": jwks_uri, "key_count": len(_jwks_cache.get("keys", []))},
-        )
-    except httpx.HTTPStatusError as exc:
-        logger.error(
-            "JWKS fetch failed",
-            extra={"status_code": exc.response.status_code, "jwks_uri": jwks_uri},
-        )
-        if not _jwks_cache:
-            raise
-    except httpx.ConnectError:
-        logger.error("JWKS fetch failed: connection refused", extra={"jwks_uri": jwks_uri})
-        if not _jwks_cache:
-            raise
-    except Exception:
-        logger.exception("JWKS fetch failed", extra={"jwks_uri": jwks_uri})
-        if not _jwks_cache:
-            raise
+        if force and (now - _jwks_cache_time) < _MIN_REFRESH_INTERVAL:
+            logger.warning(
+                "JWKS refresh throttled",
+                extra={"min_interval_seconds": _MIN_REFRESH_INTERVAL},
+            )
+            return _jwks_cache
+
+        try:
+            resp = httpx.get(jwks_uri, timeout=10.0)
+            resp.raise_for_status()
+            _jwks_cache = resp.json()
+            _jwks_cache_time = now
+            logger.info(
+                "JWKS fetched",
+                extra={"jwks_uri": jwks_uri, "key_count": len(_jwks_cache.get("keys", []))},
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "JWKS fetch failed",
+                extra={"status_code": exc.response.status_code, "jwks_uri": jwks_uri},
+            )
+            if not _jwks_cache:
+                raise
+        except httpx.ConnectError:
+            logger.error("JWKS fetch failed: connection refused", extra={"jwks_uri": jwks_uri})
+            if not _jwks_cache:
+                raise
+        except Exception:
+            logger.exception("JWKS fetch failed", extra={"jwks_uri": jwks_uri})
+            if not _jwks_cache:
+                raise
     return _jwks_cache
 
 
@@ -121,16 +135,19 @@ def _extract_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, str]:
 
 
 def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> dict[str, Any]:
-    """Decode and verify a JWT, raising HTTPException on failure."""
+    """Decode and verify a JWT using PyJWT, raising HTTPException on failure."""
     try:
-        return jwt.decode(
+        from jwt import PyJWK
+
+        jwk_obj = PyJWK.from_dict(rsa_key)
+        return pyjwt.decode(
             token,
-            rsa_key,
+            jwk_obj.key,
             algorithms=["RS256"],
             audience=config.audience,
             issuer=config.issuer_url,
         )
-    except jwt.ExpiredSignatureError as exc:
+    except pyjwt.ExpiredSignatureError as exc:
         logger.warning(
             "JWT validation failed: token expired",
             extra={"issuer": config.issuer_url, "audience": config.audience},
@@ -140,7 +157,7 @@ def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> di
             detail="Token has expired. Please obtain a new JWT and retry.",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
-    except JWTError as exc:
+    except pyjwt.InvalidTokenError as exc:
         logger.warning(
             "JWT validation failed",
             extra={
@@ -170,8 +187,8 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
     jwks = _fetch_jwks(jwks_uri)
 
     try:
-        unverified_header = jwt.get_unverified_header(token)
-    except JWTError as exc:
+        unverified_header = pyjwt.get_unverified_header(token)
+    except pyjwt.InvalidTokenError as exc:
         logger.warning(
             "JWT header parse failed",
             extra={"error": str(exc), "jwks_uri": jwks_uri},

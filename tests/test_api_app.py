@@ -12,7 +12,9 @@ class TestCreateApp:
         monkeypatch.setenv("CM_RATE_LIMIT_ENABLED", "false")
         app = create_app()
         assert app.title == "certmesh"
-        assert app.version == "3.2.0"
+        from certmesh import __version__
+
+        assert app.version == __version__
 
     def test_health_endpoint(self, monkeypatch):
         monkeypatch.setenv("CM_OAUTH2_ENABLED", "false")
@@ -23,9 +25,18 @@ class TestCreateApp:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
-    def test_docs_available(self, monkeypatch):
+    def test_docs_disabled_by_default(self, monkeypatch):
         monkeypatch.setenv("CM_OAUTH2_ENABLED", "false")
         monkeypatch.setenv("CM_RATE_LIMIT_ENABLED", "false")
+        app = create_app()
+        client = TestClient(app)
+        resp = client.get("/docs")
+        assert resp.status_code == 404
+
+    def test_docs_enabled_when_configured(self, monkeypatch):
+        monkeypatch.setenv("CM_OAUTH2_ENABLED", "false")
+        monkeypatch.setenv("CM_RATE_LIMIT_ENABLED", "false")
+        monkeypatch.setenv("CM_DOCS_ENABLED", "true")
         app = create_app()
         client = TestClient(app)
         resp = client.get("/docs")
