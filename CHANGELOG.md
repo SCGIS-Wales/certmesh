@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [3.0.8] - 2026-03-14
+
+### Fixed
+- **Fix 5 critical runtime bugs** in `routes/digicert.py` — every route handler called `_build_session(cfg)` with wrong signatures, causing `TypeError` at runtime ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Align order body with CertCentral API v2 spec**: replace legacy `validity_years` with `order_validity` object, add `skip_approval`, `payment_method`, `dcv_method` ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Fix revocation compliance**: field `"reason"` → `"revocation_reason"`, remove invalid `ca_compromise` reason, fix `affiliation_changed` → `affiliation_change` ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Fix rate limit handling**: DigiCert doesn't return `Retry-After` headers — use fixed 60s backoff with documented limits (1000 req/3min, 100 req/5s) ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Fix auth error message**: API keys never expire — remove misleading "not expired" text ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Add comprehensive inline documentation** with spec references throughout all public functions ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+- **Add new route handler tests** (`test_digicert_routes.py`) verifying correct function signatures ([#9](https://github.com/SCGIS-Wales/certmesh/pull/9))
+
 ## [3.0.7] - 2026-03-14
 
 ### Fixed
@@ -61,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...HEAD
+[3.0.8]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...v3.0.8
 [3.0.7]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...v3.0.7
 [3.0.6]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.5...v3.0.6
 [3.0.5]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.0...v3.0.5
