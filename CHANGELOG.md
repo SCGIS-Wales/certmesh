@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [3.0.9] - 2026-03-14
+
+### Fixed
+- **Venafi TPP**: Full API spec compliance audit and fixes for TPP v23/v25.3. Removes incorrect `grant_type` from OAuth, fixes SubjectAltNames `TypeName`, workflow ticket endpoint/payload, revocation field name, and adds LDAP deprecation warning. Rewrites all 5 Venafi route handlers from stubs to full implementations. ([#10](https://github.com/SCGIS-Wales/certmesh/pull/10))
+- **AWS ACM**: Fixes 3 critical route handler bugs where every endpoint would crash at runtime (`request_certificate` called `.get()` on string ARN, `export_certificate` used wrong function signature, `get_validation_records` treated dataclass as dict). Adds `describe_certificate` and `delete_certificate` endpoints, new `ACMExportRequest` schema with required passphrase, and updates `ExportCertificate` docs for public cert export support (June 2025+). ([#10](https://github.com/SCGIS-Wales/certmesh/pull/10))
+- **Tests**: 790 passed (29 new route handler tests across both providers) ([#10](https://github.com/SCGIS-Wales/certmesh/pull/10))
+
 ## [3.0.8] - 2026-03-14
 
 ### Fixed
@@ -73,7 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.9...HEAD
+[3.0.9]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...v3.0.9
 [3.0.8]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...v3.0.8
 [3.0.7]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...v3.0.7
 [3.0.6]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.5...v3.0.6
