@@ -98,7 +98,7 @@ def create_acme_client(
     """
     if account_key is None:
         account_key = generate_account_key()
-        logger.info("Generated new ACME account key.")
+        logger.info("Generated new ACME account key.", extra={})
 
     try:
         net = client.ClientNetwork(account_key, user_agent="certmesh")
@@ -115,11 +115,11 @@ def create_acme_client(
     )
     try:
         acme_client.new_account(registration)
-        logger.info("ACME account registered (email=%s).", email or "<none>")
+        logger.info("ACME account registered.", extra={"email": email or "<none>"})
     except Exception as exc:
         error_str = str(exc).lower()
         if "already" in error_str or "existing" in error_str:
-            logger.info("Using existing ACME account.")
+            logger.info("Using existing ACME account.", extra={})
         else:
             raise LetsEncryptRegistrationError(f"ACME account registration failed: {exc}") from exc
 
@@ -182,10 +182,8 @@ def request_certificate(
     """
     domains = [common_name] + (san or [])
     logger.info(
-        "Requesting ACME certificate for %s (SANs: %s, challenge: %s).",
-        common_name,
-        san or [],
-        challenge_type,
+        "Requesting ACME certificate.",
+        extra={"common_name": common_name, "sans": san or [], "challenge_type": challenge_type},
     )
 
     # Generate certificate private key
@@ -215,7 +213,7 @@ def request_certificate(
     # Process authorizations
     for authz in order.authorizations:
         domain = authz.body.identifier.value
-        logger.debug("Processing authorization for domain: %s", domain)
+        logger.debug("Processing authorization for domain.", extra={"domain": domain})
 
         chall_body = _select_challenge(authz.body, challenge_type)
         validation = chall_body.chall.validation(acme_client.net.key)
@@ -230,10 +228,8 @@ def request_certificate(
                 ) from exc
         else:
             logger.warning(
-                "No challenge handler provided for %s — challenge token: %s, validation: %s",
-                domain,
-                token,
-                validation,
+                "No challenge handler provided.",
+                extra={"domain": domain, "token": token, "validation": validation},
             )
 
         try:
@@ -263,7 +259,7 @@ def request_certificate(
         encryption_algorithm=serialization.NoEncryption(),
     ).decode()
 
-    logger.info("ACME certificate issued for %s.", common_name)
+    logger.info("ACME certificate issued.", extra={"common_name": common_name})
     return {
         "certificate": cert_pem,
         "chain": chain_pem,
@@ -297,7 +293,7 @@ def revoke_certificate(
         cert = x509.load_pem_x509_certificate(cert_pem.encode())
         wrapped = jose.ComparableX509(cert)
         acme_client.revoke(wrapped, reason)
-        logger.info("ACME certificate revoked (reason=%d).", reason)
+        logger.info("ACME certificate revoked.", extra={"reason": reason})
     except Exception as exc:
         raise LetsEncryptError(f"Certificate revocation failed: {exc}") from exc
 

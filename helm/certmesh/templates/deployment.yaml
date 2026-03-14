@@ -238,28 +238,41 @@ spec:
             - name: CM_API_TLS_KEY
               value: {{ .Values.vaultPkiTls.keyPath | quote }}
             {{- end }}
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
-            initialDelaySeconds: 10
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+          # Startup probe: fast polling to detect container readiness, avoids
+          # liveness killing a slow-starting pod (e.g. waiting for Vault TLS).
           startupProbe:
             httpGet:
               path: /healthz
               port: http
-            failureThreshold: 30
+            initialDelaySeconds: 2
             periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30   # 30 × 2s = 60s max startup time
+            successThreshold: 1
+          # Liveness probe: lightweight — detects process hangs.
+          # Uses /healthz which always returns 200 if the process is alive.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 0   # startup probe gates this
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3      # 3 × 15s = 45s before restart
+            successThreshold: 1
+          # Readiness probe: elaborate — checks Vault auth and AWS connectivity.
+          # /readyz returns "degraded" (still 200) when backends are unhealthy,
+          # and the pod stays in the Service endpoints. Override periodSeconds
+          # or failureThreshold to tune sensitivity.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 0   # startup probe gates this
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3      # 3 × 10s = 30s before unready
+            successThreshold: 1
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

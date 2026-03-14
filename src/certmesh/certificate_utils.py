@@ -90,7 +90,7 @@ def generate_rsa_private_key(key_size: int = 4096) -> rsa.RSAPrivateKey:
             f"RSA key generation failed (key_size={key_size}): {exc}"
         ) from exc
 
-    logger.debug("Generated RSA-%d private key.", key_size)
+    logger.debug("Generated RSA private key", extra={"key_size": key_size})
     return private_key
 
 
@@ -149,9 +149,8 @@ def build_csr(
         ) from exc
 
     logger.debug(
-        "Built CSR for CN='%s' with %d SAN(s).",
-        subject.common_name,
-        len(san_entries),
+        "Built CSR",
+        extra={"common_name": subject.common_name, "san_count": len(san_entries)},
     )
     return csr
 
@@ -299,13 +298,13 @@ def _write_to_filesystem(
 
         cert_path.write_text(bundle.certificate_pem, encoding="utf-8")
         written_files.append(cert_path)
-        logger.info("Wrote certificate PEM to '%s'.", cert_path)
+        logger.info("Wrote certificate PEM", extra={"path": str(cert_path)})
 
         fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as kf:
             kf.write(bundle.private_key_pem)
         written_files.append(key_path)
-        logger.info("Wrote private key PEM to '%s' (mode 0600).", key_path)
+        logger.info("Wrote private key PEM", extra={"path": str(key_path), "mode": "0600"})
 
         result = {
             "filesystem_cert": str(cert_path),
@@ -318,7 +317,7 @@ def _write_to_filesystem(
             )
             chain_path.write_text(bundle.chain_pem, encoding="utf-8")
             written_files.append(chain_path)
-            logger.info("Wrote CA chain PEM to '%s'.", chain_path)
+            logger.info("Wrote CA chain PEM", extra={"path": str(chain_path)})
             result["filesystem_chain"] = str(chain_path)
 
         return result
@@ -329,7 +328,9 @@ def _write_to_filesystem(
         for partial in written_files:
             try:
                 partial.unlink(missing_ok=True)
-                logger.warning("Cleaned up partial file '%s' after write failure.", partial)
+                logger.warning(
+                    "Cleaned up partial file after write failure", extra={"path": str(partial)}
+                )
             except OSError:
                 pass  # best-effort cleanup
         raise CertificateExportError(
@@ -371,10 +372,12 @@ def _write_to_vault(
     kv_version = int(output_cfg.get("kv_version", 2))
     vc.write_secret_versioned(vault_cl, vault_path, secret_data, kv_version=kv_version)
     logger.info(
-        "Certificate material for '%s' stored in Vault at '%s' (KV v%d).",
-        bundle.common_name,
-        vault_path,
-        kv_version,
+        "Certificate material stored in Vault",
+        extra={
+            "common_name": bundle.common_name,
+            "vault_path": vault_path,
+            "kv_version": kv_version,
+        },
     )
     return vault_path
 
@@ -428,9 +431,11 @@ def _write_to_secrets_manager(
         ) from exc
 
     logger.info(
-        "Certificate material for '%s' stored in Secrets Manager as '%s' (region=%s).",
-        bundle.common_name,
-        secret_name,
-        region,
+        "Certificate material stored in Secrets Manager",
+        extra={
+            "common_name": bundle.common_name,
+            "secret_name": secret_name,
+            "region": region,
+        },
     )
     return secret_name

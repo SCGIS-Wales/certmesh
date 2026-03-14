@@ -25,9 +25,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
+from certmesh.api.apikeys import APIKeyConfig, APIKeyStore
 from certmesh.api.auth import JWTBearer, OAuth2Config
+from certmesh.api.compression import build_compression_config, register_compression
 from certmesh.api.middleware import RequestIDMiddleware, register_exception_handlers
+from certmesh.api.rate_limiter import build_rate_limit_config, register_rate_limiter
 from certmesh.api.routes import acm, digicert, health, vault_pki, venafi
+from certmesh.api.routes.auth_routes import router as auth_router
 from certmesh.logging_config import configure_logging as configure_structured_logging
 from certmesh.settings import build_config, configure_logging
 
@@ -53,6 +57,17 @@ def _build_oauth2_config() -> OAuth2Config:
     )
 
 
+def _build_api_key_config() -> APIKeyConfig:
+    """Build API key exchange config from environment variables."""
+    return APIKeyConfig(
+        enabled=os.environ.get("CM_API_KEY_ENABLED", "true").lower() in ("1", "true", "yes"),
+        default_ttl_seconds=int(os.environ.get("CM_API_KEY_DEFAULT_TTL", "900")),
+        max_ttl_seconds=int(os.environ.get("CM_API_KEY_MAX_TTL", "28800")),
+        max_active_keys=int(os.environ.get("CM_API_KEY_MAX_ACTIVE", "10000")),
+        max_keys_per_subject=int(os.environ.get("CM_API_KEY_MAX_PER_SUBJECT", "5")),
+    )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: startup + shutdown."""
@@ -73,6 +88,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.oauth2_config = oauth2_config
     app.state.jwt_bearer = JWTBearer(oauth2_config)
 
+    # API key exchange
+    api_key_config = _build_api_key_config()
+    app.state.api_key_config = api_key_config
+    app.state.api_key_store = APIKeyStore(
+        _max_keys=api_key_config.max_active_keys,
+        _max_keys_per_subject=api_key_config.max_keys_per_subject,
+    )
+
     # Vault client (optional)
     vault_cfg = cfg.get("vault", {})
     app.state.vault_client = None
@@ -83,15 +106,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             client = vc.create_client(vault_cfg)
             vc.authenticate(client, vault_cfg)
             app.state.vault_client = client
-            logger.info("Vault client initialized and authenticated.")
+            logger.info("Vault client initialized and authenticated")
         except Exception:
-            logger.warning("Vault client initialization failed; continuing without Vault.")
+            logger.warning("Vault client initialization failed, continuing without Vault")
 
     app.state.aws_required = False
 
-    logger.info("certmesh API started (OAuth2 enabled=%s).", oauth2_config.enabled)
+    logger.info(
+        "certmesh API started",
+        extra={
+            "oauth2_enabled": oauth2_config.enabled,
+            "api_key_enabled": api_key_config.enabled,
+            "rate_limiting": getattr(app.state, "rate_limit_enabled", True),
+            "compression": os.environ.get("CM_COMPRESSION_ENABLED", "true"),
+        },
+    )
     yield
-    logger.info("certmesh API shutting down.")
+    logger.info("certmesh API shutting down")
 
 
 def create_app(**kwargs: Any) -> FastAPI:
@@ -99,7 +130,7 @@ def create_app(**kwargs: Any) -> FastAPI:
     app = FastAPI(
         title="certmesh",
         description="TLS certificate lifecycle management API",
-        version="3.0.0",
+        version="3.2.0",
         lifespan=_lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -120,11 +151,21 @@ def create_app(**kwargs: Any) -> FastAPI:
             allow_headers=["*"],
         )
 
-    # Exception handlers
+    # GZip compression (enabled by default)
+    compression_config = build_compression_config()
+    register_compression(app, compression_config)
+
+    # Rate limiting (enabled by default, high limits)
+    rate_limit_config = build_rate_limit_config()
+    register_rate_limiter(app, rate_limit_config)
+    app.state.rate_limit_enabled = rate_limit_config.enabled
+
+    # Exception handlers (RFC 7807 compliant)
     register_exception_handlers(app)
 
     # Routes
     app.include_router(health.router)
+    app.include_router(auth_router)
     app.include_router(digicert.router)
     app.include_router(venafi.router)
     app.include_router(vault_pki.router)

@@ -178,7 +178,7 @@ def _authenticate_oauth(
         "grant_type": "password",
     }
 
-    logger.debug("Venafi OAuth: requesting token from %s (client_id=%s).", url, client_id)
+    logger.debug("Venafi OAuth: requesting token.", extra={"url": url, "client_id": client_id})
 
     resp = session.post(url, json=payload, timeout=timeout)
 
@@ -201,7 +201,7 @@ def _authenticate_oauth(
         raise VenafiAuthenticationError("Venafi OAuth response did not contain an access_token.")
 
     session.headers["Authorization"] = f"Bearer {access_token}"
-    logger.info("Venafi: authenticated via OAuth (client_id=%s).", client_id)
+    logger.info("Venafi: authenticated via OAuth.", extra={"client_id": client_id})
 
 
 def _authenticate_ldap(
@@ -224,7 +224,7 @@ def _authenticate_ldap(
         "Password": password,
     }
 
-    logger.debug("Venafi LDAP: requesting API key from %s.", url)
+    logger.debug("Venafi LDAP: requesting API key.", extra={"url": url})
 
     resp = session.post(url, json=payload, timeout=timeout)
 
@@ -243,7 +243,7 @@ def _authenticate_ldap(
         raise VenafiLDAPAuthError("Venafi LDAP response did not contain an APIKey.")
 
     session.headers["X-Venafi-Api-Key"] = api_key
-    logger.info("Venafi: authenticated via LDAP/VEdSDK.")
+    logger.info("Venafi: authenticated via LDAP/VEdSDK.", extra={})
 
 
 def authenticate(
@@ -382,7 +382,7 @@ def _approve_workflow_tickets(
     tickets: list[JsonDict] = data.get("Tickets", data.get("tickets", []))
 
     if not tickets:
-        logger.debug("No pending workflow tickets for DN='%s'.", certificate_dn)
+        logger.debug("No pending workflow tickets.", extra={"certificate_dn": certificate_dn})
         return
 
     # Step 2: approve each ticket
@@ -391,7 +391,7 @@ def _approve_workflow_tickets(
     for ticket in tickets:
         ticket_id = ticket.get("Id", ticket.get("id"))
         if ticket_id is None:
-            logger.warning("Workflow ticket missing 'Id' field: %s", ticket)
+            logger.warning("Workflow ticket missing 'Id' field.", extra={"ticket": ticket})
             continue
 
         approve_payload: JsonDict = {
@@ -414,9 +414,8 @@ def _approve_workflow_tickets(
             )
 
         logger.info(
-            "Approved workflow ticket %s for DN='%s'.",
-            ticket_id,
-            certificate_dn,
+            "Approved workflow ticket.",
+            extra={"ticket_id": ticket_id, "certificate_dn": certificate_dn},
         )
 
 
@@ -454,18 +453,19 @@ def _poll_certificate_ready(
             status_text: str = data.get("Status", data.get("status", ""))
 
             logger.debug(
-                "Poll DN='%s': stage=%d, status='%s', elapsed=%ds.",
-                certificate_dn,
-                stage,
-                status_text,
-                elapsed,
+                "Poll certificate status.",
+                extra={
+                    "certificate_dn": certificate_dn,
+                    "stage": stage,
+                    "status": status_text,
+                    "elapsed_seconds": elapsed,
+                },
             )
 
             if stage >= 500:
                 logger.info(
-                    "Certificate DN='%s' is ready (stage=%d).",
-                    certificate_dn,
-                    stage,
+                    "Certificate is ready.",
+                    extra={"certificate_dn": certificate_dn, "stage": stage},
                 )
                 return
         else:
@@ -474,9 +474,8 @@ def _poll_certificate_ready(
             if 400 <= resp.status_code < 500 and resp.status_code not in (404, 408, 429):
                 _raise_for_status(resp, f"Poll certificate DN='{certificate_dn}'")
             logger.warning(
-                "Poll DN='%s': HTTP %d (will retry).",
-                certificate_dn,
-                resp.status_code,
+                "Poll certificate: unexpected HTTP status (will retry).",
+                extra={"certificate_dn": certificate_dn, "status_code": resp.status_code},
             )
 
         time.sleep(interval)
@@ -655,7 +654,7 @@ def renew_and_download_certificate(
                 status_code=resp.status_code,
             )
 
-        logger.info("Renewal initiated for GUID='%s'.", certificate_guid)
+        logger.info("Renewal initiated.", extra={"certificate_guid": certificate_guid})
 
         # We need the DN for subsequent calls
         certificate_dn: str = renew_data.get(
@@ -683,8 +682,8 @@ def renew_and_download_certificate(
             )
         except VenafiWorkflowApprovalError:
             logger.warning(
-                "Workflow approval failed for DN='%s'; certificate may already be approved.",
-                certificate_dn,
+                "Workflow approval failed; certificate may already be approved.",
+                extra={"certificate_dn": certificate_dn},
             )
 
         # ----- 3. Poll for completion -----
@@ -721,10 +720,12 @@ def renew_and_download_certificate(
         )
 
         logger.info(
-            "Venafi renewal complete for GUID='%s' (CN='%s', serial=%s).",
-            certificate_guid,
-            bundle.common_name,
-            bundle.serial_number,
+            "Venafi renewal complete.",
+            extra={
+                "certificate_guid": certificate_guid,
+                "common_name": bundle.common_name,
+                "serial": bundle.serial_number,
+            },
         )
         return bundle
 
@@ -782,10 +783,8 @@ def list_certificates(
             )
 
         logger.info(
-            "Venafi: listed %d certificate(s) (offset=%d, limit=%d).",
-            len(summaries),
-            offset,
-            limit,
+            "Venafi: listed certificates.",
+            extra={"count": len(summaries), "offset": offset, "limit": limit},
         )
         return summaries
 
@@ -877,8 +876,8 @@ def search_certificates(
             )
 
         logger.info(
-            "Venafi: search returned %d certificate(s).",
-            len(summaries),
+            "Venafi: search returned certificates.",
+            extra={"count": len(summaries)},
         )
         return summaries
 
@@ -942,9 +941,11 @@ def describe_certificate(
         )
 
         logger.info(
-            "Venafi: described certificate GUID='%s' (CN-like subject='%s').",
-            certificate_guid,
-            detail.subject[:80] if detail.subject else "(empty)",
+            "Venafi: described certificate.",
+            extra={
+                "certificate_guid": certificate_guid,
+                "subject": detail.subject[:80] if detail.subject else "(empty)",
+            },
         )
         return detail
 
@@ -1031,9 +1032,8 @@ def revoke_certificate(
 
         identifier = certificate_dn or thumbprint
         logger.info(
-            "Venafi: revoked certificate '%s' (reason=%d).",
-            identifier,
-            reason,
+            "Venafi: revoked certificate.",
+            extra={"identifier": identifier, "reason": reason},
         )
         return result
 
@@ -1120,15 +1120,15 @@ def request_certificate(
             csr_pem = cu.csr_to_pem(csr)
             payload["PKCS10"] = csr_pem
             logger.debug(
-                "Request certificate: using client-side CSR for CN='%s'.",
-                subject.common_name,
+                "Request certificate: using client-side CSR.",
+                extra={"common_name": subject.common_name},
             )
         else:
             # Ask Venafi to generate the key server-side
             payload["KeyBitSize"] = key_size
             logger.debug(
-                "Request certificate: server-side key generation for CN='%s'.",
-                subject.common_name,
+                "Request certificate: server-side key generation.",
+                extra={"common_name": subject.common_name},
             )
 
         # ----- Submit the request -----
@@ -1151,9 +1151,8 @@ def request_certificate(
 
         certificate_guid: str = request_data.get("Guid", request_data.get("guid", ""))
         logger.info(
-            "Venafi: certificate request submitted — DN='%s', GUID='%s'.",
-            certificate_dn,
-            certificate_guid,
+            "Venafi: certificate request submitted.",
+            extra={"certificate_dn": certificate_dn, "certificate_guid": certificate_guid},
         )
 
         # ----- Approve workflow tickets -----
@@ -1167,8 +1166,8 @@ def request_certificate(
             )
         except VenafiWorkflowApprovalError:
             logger.warning(
-                "Workflow approval failed for DN='%s'; may not require approval.",
-                certificate_dn,
+                "Workflow approval failed; may not require approval.",
+                extra={"certificate_dn": certificate_dn},
             )
 
         # ----- Poll for completion -----
@@ -1230,10 +1229,12 @@ def request_certificate(
             )
 
         logger.info(
-            "Venafi: new certificate issued — CN='%s', serial=%s, GUID='%s'.",
-            bundle.common_name,
-            bundle.serial_number,
-            certificate_guid,
+            "Venafi: new certificate issued.",
+            extra={
+                "common_name": bundle.common_name,
+                "serial": bundle.serial_number,
+                "certificate_guid": certificate_guid,
+            },
         )
         return bundle
 
@@ -1273,7 +1274,7 @@ def _resolve_dn_from_guid(
         raise VenafiCertificateNotFoundError(
             f"Could not resolve DN for GUID='{guid}'. The certificate may not exist."
         )
-    logger.debug("Resolved GUID='%s' -> DN='%s'.", guid, dn)
+    logger.debug("Resolved GUID to DN.", extra={"guid": guid, "dn": dn})
     return dn
 
 

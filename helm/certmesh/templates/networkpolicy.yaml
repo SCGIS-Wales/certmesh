@@ -14,18 +14,32 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow traffic from within the cluster (ALB/NLB, Prometheus scraper)
+    # Allow same-namespace traffic on application ports
     - ports:
-        - port: 8000
-          protocol: TCP
+        {{- range .Values.networkPolicy.ingressPorts }}
+        - port: {{ .port }}
+          protocol: {{ .protocol | default "TCP" }}
+        {{- end }}
+      {{- if or .Values.networkPolicy.ingressCIDRs .Values.networkPolicy.allowedNamespaces }}
+      from:
+        {{- range .Values.networkPolicy.ingressCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      {{- end }}
   egress:
-    # DNS resolution
+    # DNS resolution (kube-dns / CoreDNS)
     - ports:
         - port: 53
           protocol: UDP
         - port: 53
           protocol: TCP
-    # HTTPS for external APIs (DigiCert, Venafi, AWS, Vault)
+    # HTTPS for external APIs (DigiCert, Venafi, AWS, Let's Encrypt, OIDC JWKS)
     - ports:
         - port: 443
           protocol: TCP

@@ -86,7 +86,9 @@ def check_and_renew(
             provider_results = _check_provider(cfg, provider, policy)
             results.extend(provider_results)
         except Exception as exc:
-            logger.error("Error checking provider '%s': %s", provider, exc)
+            logger.error(
+                "Error checking provider", extra={"provider": provider, "error": str(exc)}
+            )
             results.append(
                 RenewalResult(
                     provider=provider,
@@ -105,11 +107,13 @@ def check_and_renew(
     errors = sum(1 for r in results if r.error)
 
     logger.info(
-        "Renewal check complete: %d certificates checked, %d need renewal, %d renewed, %d errors.",
-        total,
-        needs_renewal,
-        renewed,
-        errors,
+        "Renewal check complete",
+        extra={
+            "total_checked": total,
+            "needs_renewal": needs_renewal,
+            "renewed": renewed,
+            "errors": errors,
+        },
     )
 
     return results
@@ -121,7 +125,9 @@ def _check_provider(
     policy: RenewalPolicy,
 ) -> list[RenewalResult]:
     """Check a single provider for certificates needing renewal."""
-    logger.info("Checking provider '%s' for certificates approaching expiry...", provider)
+    logger.info(
+        "Checking provider for certificates approaching expiry", extra={"provider": provider}
+    )
 
     # Each provider-specific check is a stub that can be extended
     # when the provider's list/describe capabilities are wired up.
@@ -130,13 +136,15 @@ def _check_provider(
 
     provider_cfg = cfg.get(provider.replace("-", "_"), {})
     if not provider_cfg:
-        logger.debug("Provider '%s' not configured, skipping.", provider)
+        logger.debug("Provider not configured, skipping", extra={"provider": provider})
         return results
 
     logger.info(
-        "Provider '%s': found %d certificates, %d need renewal.",
-        provider,
-        len(results),
-        sum(1 for r in results if r.needs_renewal),
+        "Provider certificate check complete",
+        extra={
+            "provider": provider,
+            "certificate_count": len(results),
+            "needs_renewal": sum(1 for r in results if r.needs_renewal),
+        },
     )
     return results

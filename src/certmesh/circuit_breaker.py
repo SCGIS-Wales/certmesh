@@ -63,9 +63,8 @@ def create_circuit_breaker(
     def _on_success() -> None:
         if _state["circuit"] != _State.CLOSED:
             logger.info(
-                "Circuit breaker '%s': probe succeeded — transitioning %s -> CLOSED.",
-                name,
-                _state["circuit"].value,
+                "Circuit breaker probe succeeded, transitioning to CLOSED",
+                extra={"breaker_name": name, "previous_state": _state["circuit"].value},
             )
         _state["circuit"] = _State.CLOSED
         _state["failure_count"] = 0
@@ -79,16 +78,17 @@ def create_circuit_breaker(
             _state["circuit"] = _State.OPEN
             if previous != _State.OPEN:
                 logger.warning(
-                    "Circuit breaker '%s': opened after %d consecutive failures.",
-                    name,
-                    _state["failure_count"],
+                    "Circuit breaker opened after consecutive failures",
+                    extra={"breaker_name": name, "failure_count": _state["failure_count"]},
                 )
         else:
             logger.debug(
-                "Circuit breaker '%s': failure %d/%d recorded.",
-                name,
-                _state["failure_count"],
-                failure_threshold,
+                "Circuit breaker failure recorded",
+                extra={
+                    "breaker_name": name,
+                    "failure_count": _state["failure_count"],
+                    "failure_threshold": failure_threshold,
+                },
             )
 
     def _check_and_maybe_advance() -> None:
@@ -99,16 +99,17 @@ def create_circuit_breaker(
             if elapsed >= recovery_timeout_seconds:
                 _state["circuit"] = _State.HALF_OPEN
                 logger.info(
-                    "Circuit breaker '%s': recovery timeout elapsed — "
-                    "transitioning OPEN -> HALF_OPEN.",
-                    name,
+                    "Circuit breaker recovery timeout elapsed, transitioning OPEN to HALF_OPEN",
+                    extra={"breaker_name": name},
                 )
             else:
                 raise CircuitBreakerOpenError(
                     f"Circuit breaker '{name}' is OPEN. Next probe allowed in {remaining:.1f}s."
                 )
         elif circuit == _State.HALF_OPEN:
-            logger.debug("Circuit breaker '%s': allowing HALF_OPEN probe call.", name)
+            logger.debug(
+                "Circuit breaker allowing HALF_OPEN probe call", extra={"breaker_name": name}
+            )
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -123,10 +124,12 @@ def create_circuit_breaker(
                 with _lock:
                     _on_failure()
                 logger.debug(
-                    "Circuit breaker '%s': recorded failure — %s: %s",
-                    name,
-                    type(exc).__name__,
-                    exc,
+                    "Circuit breaker recorded failure",
+                    extra={
+                        "breaker_name": name,
+                        "exception_type": type(exc).__name__,
+                        "exception_message": str(exc),
+                    },
                 )
                 raise
             else:

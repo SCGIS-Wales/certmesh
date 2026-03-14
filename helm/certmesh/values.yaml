@@ -159,6 +159,38 @@ secretsManager:
   enabled: false
   region: "us-east-1"
 
+# --- API Key Exchange ---
+# Exchange a valid JWT Bearer token for a short-lived API key via:
+#   POST /api/v1/auth/token { "ttl_seconds": 900 }
+#
+# The API key is returned once and can be used in subsequent requests via
+# the X-API-Key header. When the key nears expiry, the response includes
+# X-CertMesh-Key-Expiring: true to signal the client to re-authenticate.
+#
+# Flow:
+#   1. Client authenticates with JWT → POST /api/v1/auth/token
+#   2. Server returns short-lived API key (default 15min, max 8h)
+#   3. Client uses X-API-Key header for subsequent requests
+#   4. When key expires, server responds 401 with X-CertMesh-Key-Expired header
+#   5. Client obtains new JWT and exchanges again
+apiKey:
+  enabled: true
+  defaultTtlSeconds: 900        # 15 minutes — default key lifetime
+  maxTtlSeconds: 28800          # 8 hours — maximum allowed key lifetime
+  maxActiveKeys: 10000          # safeguard against memory exhaustion
+  maxKeysPerSubject: 5          # max concurrent keys per JWT subject/client
+
+# --- Rate Limiting / Throttling ---
+# Configurable rate limiting returning HTTP 429 with Retry-After header.
+# Defaults are intentionally high to protect without restricting normal use.
+#
+# Limit string format: "<count>/<period>"
+#   e.g. "1000/minute", "100/second", "5000/hour"
+rateLimit:
+  enabled: true
+  defaultLimit: "1000/minute"   # overall per-client limit
+  burstLimit: "100/second"      # per-second burst protection
+
 # --- API Server ---
 api:
   workers: 4
@@ -166,6 +198,45 @@ api:
   maxRequestSize: "1048576"  # 1MB
   corsOrigins: ""
   logLevel: "info"
+
+# --- TLS Server Configuration ---
+# Direct TLS termination at the certmesh API server.
+# For Kubernetes deployments, TLS is typically handled by:
+#   1. Ingress controller (nginx, traefik, ALB) — preferred
+#   2. Vault PKI init container (vaultPkiTls section above)
+#   3. cert-manager + vaultPkiTls.method=certManager
+#
+# Enable this only for bare-metal / VM deployments without a reverse proxy.
+#
+# TLS protocol: TLS 1.3 preferred, TLS 1.2 as fallback.
+# Cipher suites follow Mozilla "Intermediate" compatibility (strong defaults).
+tls:
+  enabled: false
+  certFile: "/etc/tls/tls.crt"
+  keyFile: "/etc/tls/tls.key"
+  caFile: "/etc/tls/ca.crt"
+  minVersion: "TLSv1.2"
+  maxVersion: "TLSv1.3"
+  # TLS 1.2 cipher suites (TLS 1.3 ciphers managed by OpenSSL, cannot be disabled).
+  # Mozilla "Intermediate" compatibility — strong defaults, wide client support.
+  ciphers: >-
+    ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256
+  honorCipherOrder: true        # server chooses cipher preference
+  sessionTickets: false         # disabled for forward secrecy
+
+# --- HTTP Keep-Alive ---
+# Keep-alive settings for persistent HTTP connections.
+keepAlive:
+  timeout: 75                   # seconds before idle connection is closed (matches nginx)
+  maxRequests: 1000             # max requests per persistent connection
+
+# --- Response Compression ---
+# GZip compression for API responses. Reduces bandwidth for JSON payloads.
+# Enabled by default; disable if your reverse proxy handles compression.
+compression:
+  enabled: true
+  minimumSize: 500              # bytes — only compress responses >= this size
+  level: 6                      # gzip level 1-9 (6 = good balance of speed/ratio)
 
 # --- Horizontal Pod Autoscaling ---
 autoscaling:
@@ -223,12 +294,24 @@ service:
   # AWS NLB annotations — active by default. For non-AWS deployments, set
   # service.annotations={} to clear these.  Change service.type to LoadBalancer
   # to activate the NLB.
+  #
+  # AWS NLB Security Group (uncomment to restrict inbound traffic):
+  #   service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-0123456789abcdef0"
+  #   # OR let the AWS LB Controller create a managed SG:
+  #   service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+  #
+  # external-dns annotation (uncomment to create DNS records automatically):
+  #   external-dns.alpha.kubernetes.io/hostname: "certmesh.internal.example.com"
+  #   external-dns.alpha.kubernetes.io/ttl: "300"
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
     service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
     service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    # service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-XXXXXXXXXXXXXXXXX"
+    # external-dns.alpha.kubernetes.io/hostname: "certmesh.internal.example.com"
+    # external-dns.alpha.kubernetes.io/ttl: "300"
 
 ingress:
   enabled: false
@@ -265,6 +348,32 @@ ingress:
 
 networkPolicy:
   enabled: true
+  # --- Ingress rules (inbound traffic to certmesh) ---
+  # By default only allows traffic from within the same namespace.
+  # Set ingressCIDRs to restrict by IP range (e.g. private network only).
+  # Set allowedNamespaces to allow cross-namespace access from specific namespaces.
+  #
+  # Example: allow only internal RFC 1918 networks:
+  #   ingressCIDRs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  #
+  # Example: allow specific namespaces:
+  #   allowedNamespaces: ["monitoring", "ingress-nginx", "istio-system"]
+  ingressCIDRs: []
+    # - "10.0.0.0/8"         # AWS VPC default
+    # - "172.16.0.0/12"      # Private network
+    # - "192.168.0.0/16"     # Private network
+  # Kubernetes namespaces allowed to reach certmesh on the service port.
+  # Leave empty to allow only same-namespace traffic (default).
+  # Add namespace names to permit cross-namespace ingress.
+  allowedNamespaces: []
+    # - "monitoring"          # Prometheus scraping
+    # - "ingress-nginx"       # Ingress controller
+    # - "istio-system"        # Service mesh
+  # Application ports open for inbound traffic
+  ingressPorts:
+    - port: 8000
+      protocol: TCP
+  # --- Egress rules (outbound traffic from certmesh) ---
   # Allowed egress destinations
   egressCIDRs:
     - "0.0.0.0/0"  # Override with specific CIDRs in production
@@ -349,7 +458,7 @@ vaultPkiTls:
   roleName: "certmesh-server"    # Role name on the issuing PKI engine
   commonName: "certmesh.internal.example.com"
   sans: []                       # e.g. ["certmesh-0.internal.example.com"]
-  ttl: "720h"                    # 30 days
+  ttl: "8760h"                   # 365 days
   # --- CA chain: intermediate + root (used by initContainer method) ---
   # The init container fetches CA certs from these PKI engines and
   # concatenates them into a single ca-bundle.crt (intermediate first, root last).

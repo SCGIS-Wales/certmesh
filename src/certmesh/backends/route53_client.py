@@ -61,7 +61,9 @@ def sync_validation_records(
         )
 
     if not changes:
-        logger.warning("No DNS validation records found for '%s'.", certificate_arn)
+        logger.warning(
+            "No DNS validation records found", extra={"certificate_arn": certificate_arn}
+        )
         return 0
 
     # Upsert to Route53
@@ -77,10 +79,12 @@ def sync_validation_records(
         ) from exc
 
     logger.info(
-        "Synced %d DNS validation record(s) to Route53 zone '%s' for cert '%s'.",
-        len(changes),
-        hosted_zone_id,
-        certificate_arn,
+        "Synced DNS validation records to Route53",
+        extra={
+            "record_count": len(changes),
+            "hosted_zone_id": hosted_zone_id,
+            "certificate_arn": certificate_arn,
+        },
     )
     return len(changes)
 
@@ -123,6 +127,7 @@ def delete_validation_records(
         ) from exc
 
     logger.info(
-        "Deleted %d DNS validation record(s) from Route53 zone '%s'.", len(changes), hosted_zone_id
+        "Deleted DNS validation records from Route53",
+        extra={"record_count": len(changes), "hosted_zone_id": hosted_zone_id},
     )
     return len(changes)
