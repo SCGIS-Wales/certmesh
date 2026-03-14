@@ -63,10 +63,9 @@ class TestVCertFakeConnector:
 
     def test_request_with_key_type(self, fake_connector):
         """Request a certificate with specific key type."""
-        request = CertificateRequest(
-            common_name="keytype-test.example.com",
-            key_type=KeyType.RSA,
-        )
+        request = CertificateRequest(common_name="keytype-test.example.com")
+        # VCert validates key_type via __setattr__; use the KeyType instance
+        request.key_type = KeyType(KeyType.RSA, 2048)
         fake_connector.request_cert(request, FAKE_ZONE)
         cert = fake_connector.retrieve_cert(request)
         assert cert.cert is not None
