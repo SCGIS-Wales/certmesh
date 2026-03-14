@@ -33,25 +33,42 @@ serviceAccount:
     #   Vault IAM Auth:   sts:AssumeRole, sts:GetCallerIdentity
   name: ""
 
-# --- OAuth2 Configuration ---
+# --- OAuth2 / OIDC Configuration ---
+# Scopes are OAuth2 permissions, NOT Azure AD groups.
+# They are validated against the "scope" claim (Entra ID) or "scp" claim (ADFS)
+# in the JWT Bearer token.
+#
+# Azure Entra ID setup:
+#   1. Register an app in Azure Portal > App Registrations
+#   2. Under "Expose an API", add scopes:
+#        api://<client-id>/certmesh:read
+#        api://<client-id>/certmesh:write
+#        api://<client-id>/certmesh:admin
+#   3. Grant admin consent for the scopes
+#   4. Set issuerUrl to your tenant's v2.0 endpoint
+#
+# Azure Entra ID example:
+#   issuerUrl: "https://login.microsoftonline.com/<tenant-id>/v2.0"
+#   audience: "api://<application-client-id>"
+#   providerHint: "entra_id"
+#
+# ADFS example:
+#   issuerUrl: "https://adfs.corp.example.com/adfs"
+#   audience: "<relying-party-identifier>"
+#   providerHint: "adfs"
 oauth2:
   enabled: true
-  # Azure Entra ID example:
-  #   issuerUrl: "https://login.microsoftonline.com/<tenant-id>/v2.0"
-  #   audience: "<application-client-id>"
-  # ADFS example:
-  #   issuerUrl: "https://adfs.corp.example.com/adfs"
-  #   jwksUri: "https://adfs.corp.example.com/adfs/discovery/keys"
-  #   audience: "<relying-party-identifier>"
-  # AWS Cognito example:
-  #   issuerUrl: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_XXXXX"
   issuerUrl: ""
   audience: ""
-  jwksUri: ""  # auto-derived from issuerUrl if blank
+  jwksUri: ""  # auto-derived from issuerUrl based on providerHint
+  # Provider-specific JWKS URI derivation:
+  #   generic:  {issuerUrl}/.well-known/jwks.json
+  #   entra_id: {issuerUrl}/discovery/v2.0/keys
+  #   adfs:     {issuerUrl}/discovery/keys
   providerHint: "generic"  # "generic" | "adfs" | "entra_id"
-  requiredScopes: "certmesh:read"
-  adminScopes: "certmesh:admin"
-  writeScopes: "certmesh:write"
+  requiredScopes: "certmesh:read"   # minimum scope for any API access
+  adminScopes: "certmesh:admin"     # scope for admin operations (revoke, delete)
+  writeScopes: "certmesh:write"     # scope for write operations (order, request)
 
 # --- Provider Configuration ---
 digicert:
@@ -113,6 +130,8 @@ vault:
     mountPoint: "aws"
   tls:
     verify: true
+  kubernetes:
+    role: "certmesh"  # Vault Kubernetes auth role
 
 # --- AWS Secrets Manager ---
 secretsManager:
@@ -180,25 +199,48 @@ metrics:
 service:
   type: ClusterIP
   port: 8000
-
-ingress:
-  enabled: false
-  className: ""
+  # AWS NLB annotations — active by default. For non-AWS deployments, set
+  # service.annotations={} to clear these.  Change service.type to LoadBalancer
+  # to activate the NLB.
   annotations:
-    # NLB (default for AWS):
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
-    # For ALB instead, uncomment:
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+
+ingress:
+  enabled: false
+  className: ""  # "nginx", "traefik", "alb", or any ingress controller class
+  annotations: {}
+    # --- NGINX Ingress Controller ---
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    # nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    # nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"  # if vaultPkiTls enabled
+    #
+    # --- Traefik Ingress Controller ---
+    # traefik.ingress.kubernetes.io/router.tls: "true"
+    # traefik.ingress.kubernetes.io/router.entrypoints: "websecure"
+    #
+    # --- AWS ALB Ingress Controller ---
     # alb.ingress.kubernetes.io/scheme: "internal"
     # alb.ingress.kubernetes.io/target-type: "ip"
-    # alb.ingress.kubernetes.io/certificate-arn: ""
+    # alb.ingress.kubernetes.io/certificate-arn: "<acm-certificate-arn>"
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    #
+    # --- AWS NLB ---
+    # NLB is typically configured at the Service level (service.annotations),
+    # not on an Ingress resource. See service.annotations above.
   hosts:
     - host: certmesh.internal.example.com
       paths:
         - path: /
           pathType: Prefix
   tls: []
+    # - secretName: certmesh-tls
+    #   hosts:
+    #     - certmesh.internal.example.com
 
 networkPolicy:
   enabled: true
@@ -207,22 +249,110 @@ networkPolicy:
     - "0.0.0.0/0"  # Override with specific CIDRs in production
 
 # --- Vault PKI TLS Auto-Issuance ---
+# When enabled, an init container runs before the main certmesh container to:
+#   1. Authenticate to Vault (AppRole, Kubernetes, or AWS IAM)
+#   2. Issue a leaf TLS certificate from the intermediate PKI engine
+#   3. Fetch the intermediate CA cert from the intermediate PKI engine
+#   4. Fetch the root CA cert from the root PKI engine
+#   5. Build a full CA bundle (intermediate + root) for TLS verification
+#   6. Write cert, key, and CA bundle to a shared emptyDir volume
+#
+# Prerequisites:
+#   - Vault PKI engines mounted (e.g. pki/ for root, pki_int/ for intermediate)
+#   - A role configured on the issuing PKI engine allowing the CN and SANs
+#   - Vault auth method granting access to the PKI engines
+#
+# Example Vault PKI setup:
+#   # Root CA
+#   vault secrets enable -path=pki pki
+#   vault write pki/root/generate/internal common_name="Example Root CA" ttl=87600h
+#
+#   # Intermediate CA
+#   vault secrets enable -path=pki_int pki
+#   vault write -format=json pki_int/intermediate/generate/internal \
+#     common_name="Example Intermediate CA" | jq -r '.data.csr' > int.csr
+#   vault write -format=json pki/root/sign-intermediate csr=@int.csr ttl=43800h \
+#     | jq -r '.data.certificate' > int.crt
+#   vault write pki_int/intermediate/set-signed certificate=@int.crt
+#
+#   # Role for certmesh server certs
+#   vault write pki_int/roles/certmesh-server \
+#     allowed_domains="internal.example.com" allow_subdomains=true max_ttl="720h"
 vaultPkiTls:
   enabled: false
-  # "leaf" = server certificate; "intermediate" = intermediate CA (no signing)
-  certType: "leaf"
-  mountPoint: "pki"
-  roleName: "certmesh-server"
+  # --- TLS provisioning method ---
+  # "initContainer" : (default) the built-in init container issues a fresh cert
+  #                    from Vault PKI on every pod start (zero external dependencies)
+  # "certManager"   : cert-manager's vault-issuer provisions the cert as a K8s
+  #                    Secret; the deployment just mounts the Secret. You must
+  #                    install cert-manager and create a ClusterIssuer / Issuer
+  #                    pointing to the Vault PKI engine before enabling this.
+  #
+  # Example cert-manager ClusterIssuer (Vault PKI):
+  #   apiVersion: cert-manager.io/v1
+  #   kind: ClusterIssuer
+  #   metadata:
+  #     name: vault-pki-issuer
+  #   spec:
+  #     vault:
+  #       server: https://vault.example.com
+  #       path: pki_int/sign/certmesh-server
+  #       auth:
+  #         kubernetes:
+  #           role: certmesh
+  #           mountPath: /v1/auth/kubernetes
+  #           serviceAccountRef:
+  #             name: certmesh
+  #
+  # Example Certificate resource:
+  #   apiVersion: cert-manager.io/v1
+  #   kind: Certificate
+  #   metadata:
+  #     name: certmesh-tls
+  #   spec:
+  #     secretName: certmesh-tls
+  #     issuerRef:
+  #       name: vault-pki-issuer
+  #       kind: ClusterIssuer
+  #     commonName: certmesh.internal.example.com
+  #     dnsNames:
+  #       - certmesh.internal.example.com
+  method: "initContainer"        # "initContainer" or "certManager"
+  # --- cert-manager settings (only when method=certManager) ---
+  # When using cert-manager, provide the Secret name that cert-manager populates.
+  # cert-manager handles renewal automatically via its own controller.
+  certManagerSecretName: "certmesh-tls"  # K8s Secret created by cert-manager Certificate resource
+  certType: "leaf"               # "leaf" = server certificate
+  # --- Issuing PKI engine (issues the leaf cert — used by initContainer method) ---
+  mountPoint: "pki_int"          # Vault PKI mount for issuing certs (typically intermediate)
+  roleName: "certmesh-server"    # Role name on the issuing PKI engine
   commonName: "certmesh.internal.example.com"
-  sans: []
-  ttl: "720h"  # 30 days
-  # Mount paths inside the container
+  sans: []                       # e.g. ["certmesh-0.internal.example.com"]
+  ttl: "720h"                    # 30 days
+  # --- CA chain: intermediate + root (used by initContainer method) ---
+  # The init container fetches CA certs from these PKI engines and
+  # concatenates them into a single ca-bundle.crt (intermediate first, root last).
+  intermediateMountPoint: "pki_int"  # PKI mount that has the intermediate CA cert
+  rootMountPoint: "pki"              # PKI mount that has the root CA cert
+  fetchCaChain: true                 # Set to false to use only the issuing_ca from the cert response
+  # --- Mount paths inside the container ---
   certPath: "/etc/tls/tls.crt"
   keyPath: "/etc/tls/tls.key"
-  caPath: "/etc/tls/ca.crt"
-  # For intermediate CA without signing capability
-  issueIntermediate: false
-  intermediateMountPoint: "pki_int"
+  caPath: "/etc/tls/ca.crt"      # full CA bundle (intermediate + root)
+
+# --- Certificate Auto-Renewal ---
+# When enabled, a Kubernetes CronJob periodically checks certificates
+# across all configured providers and renews those approaching expiry.
+certRenewal:
+  enabled: false
+  # Cron schedule for renewal checks (default: daily at 2 AM UTC)
+  schedule: "0 2 * * *"
+  # Renew certificates expiring within this many units of time
+  beforeExpiry: 30
+  # Time unit: "year" | "month" | "day" | "hour"
+  unit: "day"
+  # Provider to check: "all" | "vault-pki" | "acm" | "digicert" | "venafi" | "letsencrypt"
+  provider: "all"
 
 # --- Persistence (for filesystem output) ---
 persistence:

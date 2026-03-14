@@ -74,9 +74,12 @@ from certmesh.exceptions import (
     CertificateError,
     CertMeshError,
     ConfigurationError,
+    DigiCertAuthenticationError,
     DigiCertError,
+    VaultAuthenticationError,
     VaultError,
     VaultPKIError,
+    VenafiAuthenticationError,
     VenafiError,
 )
 from certmesh.logging_config import configure_logging as configure_structured_logging
@@ -1202,3 +1205,97 @@ def config_validate(ctx: click.Context) -> None:
     except ConfigurationError as exc:
         click.echo(f"Validation failed: {exc}", err=True)
         sys.exit(1)
+
+
+# =============================================================================
+# Renewal commands
+# =============================================================================
+
+
+@cli.group()
+def renewal() -> None:
+    """Certificate renewal management."""
+
+
+@renewal.command("check")
+@click.option(
+    "--provider",
+    type=click.Choice(["all", "vault-pki", "acm", "digicert", "venafi", "letsencrypt"]),
+    default="all",
+    help="Provider to check for renewal.",
+)
+@click.option(
+    "--before-expiry",
+    type=int,
+    default=30,
+    help="Renew certificates expiring within this many units.",
+)
+@click.option(
+    "--unit",
+    type=click.Choice(["year", "month", "day", "hour"]),
+    default="day",
+    help="Time unit for --before-expiry.",
+)
+@click.option("--dry-run", is_flag=True, help="Report but do not renew.")
+@click.pass_context
+def renewal_check(
+    ctx: click.Context, provider: str, before_expiry: int, unit: str, dry_run: bool
+) -> None:
+    """Check certificates for renewal eligibility and renew if needed."""
+    from certmesh.renewal import RenewalPolicy, check_and_renew
+
+    cfg = ctx.obj or {}
+    policy = RenewalPolicy(
+        before_expiry=before_expiry,
+        unit=unit,
+        providers=[provider],
+        dry_run=dry_run,
+    )
+
+    results = check_and_renew(cfg, policy)
+
+    # Print summary
+    for r in results:
+        status = "RENEWED" if r.renewed else ("NEEDS_RENEWAL" if r.needs_renewal else "OK")
+        if r.error:
+            status = f"ERROR: {r.error}"
+        click.echo(f"[{r.provider}] {r.common_name} ({r.identifier}): {status}")
+
+    # Exit with appropriate code
+    if any(r.error for r in results):
+        raise SystemExit(2)
+    if dry_run and any(r.needs_renewal for r in results):
+        raise SystemExit(0)
+
+
+# =============================================================================
+# Entry point with structured exit codes
+# =============================================================================
+
+
+def main() -> None:
+    """Entry point with structured exit codes."""
+    from certmesh.exitcodes import (
+        EXIT_CERT_OPERATION_ERROR,
+        EXIT_CONFIG_AUTH_ERROR,
+        EXIT_UNEXPECTED_ERROR,
+    )
+
+    try:
+        cli(standalone_mode=False)
+    except SystemExit as exc:
+        raise SystemExit(exc.code) from None
+    except (
+        ConfigurationError,
+        VaultAuthenticationError,
+        VenafiAuthenticationError,
+        DigiCertAuthenticationError,
+    ) as exc:
+        logger.error("Configuration/authentication error: %s", exc)
+        raise SystemExit(EXIT_CONFIG_AUTH_ERROR) from exc
+    except CertMeshError as exc:
+        logger.error("Certificate operation error: %s", exc)
+        raise SystemExit(EXIT_CERT_OPERATION_ERROR) from exc
+    except Exception as exc:
+        logger.error("Unexpected error: %s", exc, exc_info=True)
+        raise SystemExit(EXIT_UNEXPECTED_ERROR) from exc
