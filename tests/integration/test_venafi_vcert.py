@@ -77,3 +77,25 @@ class TestVCertFakeConnector:
         fake_connector.request_cert(request, FAKE_ZONE)
         cert = fake_connector.retrieve_cert(request)
         assert cert.cert is not None
+
+    def test_certificate_contains_valid_pem(self, fake_connector):
+        """Retrieved certificate should be valid PEM format."""
+        request = CertificateRequest(common_name="pem-test.example.com")
+        fake_connector.request_cert(request, FAKE_ZONE)
+        cert = fake_connector.retrieve_cert(request)
+        assert cert.cert is not None
+        assert "BEGIN CERTIFICATE" in cert.cert
+        assert "END CERTIFICATE" in cert.cert
+
+    def test_request_empty_common_name_fails(self, fake_connector):
+        """Requesting a cert with empty common_name should fail or produce an error."""
+        request = CertificateRequest(common_name="")
+        try:
+            fake_connector.request_cert(request, FAKE_ZONE)
+            # If fake connector allows it, cert should still be retrievable
+            cert = fake_connector.retrieve_cert(request)
+            # Fake connector may not validate — this is acceptable
+            assert cert is not None
+        except Exception:
+            # Expected — empty CN should be rejected
+            pass

@@ -153,3 +153,50 @@ class TestACMDeleteCertificate:
         # Describe should now fail
         with pytest.raises(ClientError):
             acm_client.describe_certificate(CertificateArn=arn)
+
+
+class TestACMErrorHandling:
+    """Test ACM error handling via LocalStack."""
+
+    def test_delete_nonexistent_certificate(self, acm_client):
+        """Deleting a nonexistent certificate should raise a ClientError."""
+        with pytest.raises(ClientError) as exc_info:
+            acm_client.delete_certificate(
+                CertificateArn="arn:aws:acm:us-east-1:123456789012:certificate/nonexistent-id"
+            )
+        error_code = exc_info.value.response["Error"]["Code"]
+        assert error_code in (
+            "ResourceNotFoundException",
+            "CertificateNotFoundException",
+        ), f"Unexpected error code: {error_code}"
+
+    def test_request_invalid_domain(self, acm_client):
+        """Requesting a cert with an invalid domain should fail or return an ARN."""
+        # LocalStack may be lenient with domain validation — test the response shape
+        try:
+            response = acm_client.request_certificate(
+                DomainName="*.*.invalid..domain",
+                ValidationMethod="DNS",
+            )
+            # LocalStack may not validate domain format strictly
+            assert "CertificateArn" in response
+        except ClientError as e:
+            # If it does validate, we expect a validation error
+            error_code = e.response["Error"]["Code"]
+            assert error_code in (
+                "InvalidDomainValidationOptionsException",
+                "ValidationException",
+                "InvalidParameterException",
+            ), f"Unexpected error code for invalid domain: {error_code}"
+
+    def test_describe_error_has_proper_structure(self, acm_client):
+        """Error responses should have proper Error Code and Message structure."""
+        with pytest.raises(ClientError) as exc_info:
+            acm_client.describe_certificate(
+                CertificateArn="arn:aws:acm:us-east-1:123456789012:certificate/does-not-exist"
+            )
+        error = exc_info.value.response["Error"]
+        assert "Code" in error, "Error response missing 'Code' field"
+        assert "Message" in error, "Error response missing 'Message' field"
+        assert len(error["Code"]) > 0, "Error code should not be empty"
+        assert len(error["Message"]) > 0, "Error message should not be empty"
