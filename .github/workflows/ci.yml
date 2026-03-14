@@ -353,6 +353,7 @@ jobs:
             --set vaultPkiTls.intermediateMountPoint=pki_int \
             --set vaultPkiTls.rootMountPoint=pki \
             --set metrics.serviceMonitor.enabled=false \
+            --set api.workers=2 \
             --timeout=180s
           echo "✓ Helm install succeeded"
       - name: Validate deployment is running

@@ -210,6 +210,7 @@ spec:
           # Startup probe: gates liveness + readiness during slow starts.
           #   - Polls every 2s for up to 90s (45 × 2s) to accommodate
           #     Vault TLS init, gunicorn worker fork, and app startup.
+          #   - 5s timeout accounts for worker startup I/O (Vault auth, etc.).
           #   - Uses /healthz (returns 200 if the process is alive).
           startupProbe:
             httpGet:
@@ -217,7 +218,7 @@ spec:
               port: http
             initialDelaySeconds: 2
             periodSeconds: 2
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 45   # 45 × 2s = 90s max startup time
             successThreshold: 1
           # Liveness probe: detects hung processes and triggers restart.
@@ -247,7 +248,7 @@ spec:
               port: http
             initialDelaySeconds: 0   # startup probe gates this
             periodSeconds: 5
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 3      # 3 × 5s = 15s before unready
             successThreshold: 2      # must pass 2× to re-join endpoints
           resources:
