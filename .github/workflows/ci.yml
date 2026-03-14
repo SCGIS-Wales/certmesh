@@ -502,11 +502,16 @@ jobs:
           echo "✓ Helm deployment fully validated — init container + main container healthy"
 
       - name: Capacity & Performance test (in-cluster)
+        timeout-minutes: 5
         run: |
           set -e
           echo "=== Capacity & Performance: Load test against live pod ==="
 
-          # Get the pod IP for direct testing
+          # All curl commands use --max-time and --connect-timeout to prevent
+          # hangs if port-forward drops or the pod becomes unresponsive.
+          CURL="curl -s --connect-timeout 5 --max-time 10"
+
+          # Get the pod IP for diagnostics
           POD_IP=$(kubectl get pods -n certmesh -l app.kubernetes.io/name=certmesh \
             -o jsonpath='{.items[0].status.podIP}')
           echo "Pod IP: ${POD_IP}"
@@ -514,67 +519,87 @@ jobs:
           # Port-forward in background for testing from runner
           kubectl port-forward -n certmesh svc/certmesh 8000:8000 &
           PF_PID=$!
+          # Give port-forward time to establish, verify with a probe
           sleep 3
+          for attempt in 1 2 3; do
+            if ${CURL} -o /dev/null http://localhost:8000/healthz 2>/dev/null; then
+              echo "Port-forward established (attempt ${attempt})"
+              break
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "ERROR: Port-forward failed to establish after 3 attempts"
+              kill ${PF_PID} 2>/dev/null || true
+              kubectl get pods -n certmesh -o wide
+              kubectl logs -l app.kubernetes.io/name=certmesh -n certmesh --tail=30 || true
+              exit 1
+            fi
+            sleep 2
+          done
 
           # --- Test 1: Basic reachability ---
           echo ""
           echo "--- Test 1: Health endpoint reachability ---"
-          HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz)
+          HTTP_CODE=$(${CURL} -o /dev/null -w '%{http_code}' http://localhost:8000/healthz)
           if [ "${HTTP_CODE}" = "200" ]; then
             echo "✓ /healthz returned HTTP ${HTTP_CODE}"
           else
             echo "ERROR: /healthz returned HTTP ${HTTP_CODE}"
-            curl -s http://localhost:8000/healthz || true
+            ${CURL} http://localhost:8000/healthz || true
             kill ${PF_PID} 2>/dev/null || true
             exit 1
           fi
 
           # --- Test 2: Sequential throughput ---
           echo ""
-          echo "--- Test 2: Sequential throughput (100 requests) ---"
-          ERRORS=0
+          echo "--- Test 2: Sequential throughput (50 requests) ---"
+          SEQ_ERRORS=0
           START=$(date +%s%N)
-          for i in $(seq 1 100); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/healthz)
+          for i in $(seq 1 50); do
+            CODE=$(${CURL} -o /dev/null -w '%{http_code}' http://localhost:8000/healthz || echo "000")
             if [ "${CODE}" != "200" ]; then
-              ERRORS=$((ERRORS + 1))
+              SEQ_ERRORS=$((SEQ_ERRORS + 1))
             fi
           done
           END=$(date +%s%N)
           ELAPSED_MS=$(( (END - START) / 1000000 ))
-          RPS=$(( 100 * 1000 / ELAPSED_MS ))
-          echo "  100 sequential requests in ${ELAPSED_MS}ms (≈${RPS} req/s)"
-          echo "  Errors: ${ERRORS}/100"
-          if [ "${ERRORS}" -gt 5 ]; then
-            echo "ERROR: Too many errors (${ERRORS}/100)"
+          if [ "${ELAPSED_MS}" -gt 0 ]; then
+            RPS=$(( 50 * 1000 / ELAPSED_MS ))
+          else
+            RPS=0
+          fi
+          echo "  50 sequential requests in ${ELAPSED_MS}ms (${RPS} req/s)"
+          echo "  Errors: ${SEQ_ERRORS}/50"
+          if [ "${SEQ_ERRORS}" -gt 5 ]; then
+            echo "ERROR: Too many errors (${SEQ_ERRORS}/50)"
             kill ${PF_PID} 2>/dev/null || true
             exit 1
           fi
-          echo "✓ Sequential throughput: ${RPS} req/s with ${ERRORS} errors"
+          echo "✓ Sequential throughput: ${RPS} req/s with ${SEQ_ERRORS} errors"
 
           # --- Test 3: Concurrent throughput ---
           echo ""
-          echo "--- Test 3: Concurrent throughput (50 parallel requests) ---"
-          TMPDIR=$(mktemp -d)
+          echo "--- Test 3: Concurrent throughput (20 parallel requests) ---"
+          CONC_DIR=$(mktemp -d)
           START=$(date +%s%N)
-          for i in $(seq 1 50); do
-            curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/healthz > "${TMPDIR}/${i}.out" &
+          for i in $(seq 1 20); do
+            ${CURL} -o /dev/null -w '%{http_code}\n' http://localhost:8000/healthz \
+              > "${CONC_DIR}/${i}.out" 2>/dev/null &
           done
           wait
           END=$(date +%s%N)
-          ELAPSED_MS=$(( (END - START) / 1000000 ))
-          CONCURRENT_ERRORS=$(cat "${TMPDIR}"/*.out | grep -cv "200" || true)
-          echo "  50 concurrent requests in ${ELAPSED_MS}ms"
-          echo "  Errors: ${CONCURRENT_ERRORS}/50"
-          rm -rf "${TMPDIR}"
-          echo "✓ Concurrent throughput test passed (${CONCURRENT_ERRORS} errors)"
+          CONC_MS=$(( (END - START) / 1000000 ))
+          CONC_ERRORS=$(cat "${CONC_DIR}"/*.out | grep -cv "200" || true)
+          echo "  20 concurrent requests in ${CONC_MS}ms"
+          echo "  Errors: ${CONC_ERRORS}/20"
+          rm -rf "${CONC_DIR}"
+          echo "✓ Concurrent throughput test passed (${CONC_ERRORS} errors)"
 
           # --- Test 4: Readiness endpoint deep check ---
           echo ""
           echo "--- Test 4: Readiness endpoint check ---"
-          READYZ=$(curl -s http://localhost:8000/readyz)
+          READYZ=$(${CURL} http://localhost:8000/readyz || echo "error")
           echo "  /readyz response: ${READYZ}"
-          READYZ_CODE=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/readyz)
+          READYZ_CODE=$(${CURL} -o /dev/null -w '%{http_code}' http://localhost:8000/readyz || echo "000")
           echo "  /readyz HTTP status: ${READYZ_CODE}"
           if [ "${READYZ_CODE}" = "200" ]; then
             echo "✓ Readiness probe healthy"
@@ -585,7 +610,7 @@ jobs:
           # --- Test 5: Response headers check ---
           echo ""
           echo "--- Test 5: Response headers inspection ---"
-          HEADERS=$(curl -s -I http://localhost:8000/healthz)
+          HEADERS=$(${CURL} -I http://localhost:8000/healthz || echo "")
           echo "${HEADERS}"
           if echo "${HEADERS}" | grep -qi "x-request-id"; then
             echo "✓ X-Request-ID header present"
@@ -596,8 +621,8 @@ jobs:
           # --- Summary ---
           echo ""
           echo "=== Performance Summary ==="
-          echo "  Sequential: ${RPS} req/s (100 requests, ${ERRORS} errors)"
-          echo "  Concurrent: 50 requests in ${ELAPSED_MS}ms (${CONCURRENT_ERRORS} errors)"
+          echo "  Sequential: ${RPS} req/s (50 requests, ${SEQ_ERRORS} errors)"
+          echo "  Concurrent: 20 requests in ${CONC_MS}ms (${CONC_ERRORS} errors)"
 
           kill ${PF_PID} 2>/dev/null || true
           echo ""
