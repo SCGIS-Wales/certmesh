@@ -3,10 +3,12 @@ Capacity / performance integration test for certmesh API.
 
 Tests:
 1. Rate limiting returns 429 with correct RFC headers
-2. Concurrent request handling under load
-3. API key store capacity limits
-4. Response time under sustained load
-5. GZip compression effectiveness
+2. Exempt paths (health checks) bypass rate limiting
+3. Concurrent request handling under load
+4. API key store capacity limits + LRU eviction
+5. Per-subject key limiting
+6. Response time under sustained load
+7. GZip compression effectiveness
 
 Requires: certmesh API running (or uses TestClient for in-process testing).
 """
@@ -20,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from certmesh.api.apikeys import APIKeyStore
+from certmesh.api.apikeys import APIKeyStore, _hash_key
 from certmesh.api.app import create_app
 
 
@@ -33,6 +35,8 @@ def app(monkeypatch):
     monkeypatch.setenv("CM_RATE_LIMIT_BURST", "5/second")
     monkeypatch.setenv("CM_COMPRESSION_ENABLED", "true")
     monkeypatch.setenv("CM_COMPRESSION_MIN_SIZE", "100")
+    # No exempt paths — so health endpoints ARE rate-limited for testing
+    monkeypatch.setenv("CM_RATE_LIMIT_EXEMPT_PATHS", "")
     return create_app()
 
 
@@ -55,13 +59,30 @@ def unlimited_client(unlimited_app):
     return TestClient(unlimited_app)
 
 
+@pytest.fixture()
+def exempt_app(monkeypatch):
+    """App with rate limiting ON and default exempt paths (health endpoints exempt)."""
+    monkeypatch.setenv("CM_OAUTH2_ENABLED", "false")
+    monkeypatch.setenv("CM_RATE_LIMIT_ENABLED", "true")
+    monkeypatch.setenv("CM_RATE_LIMIT_DEFAULT", "5/minute")  # very low
+    monkeypatch.setenv("CM_RATE_LIMIT_BURST", "3/second")
+    # Default exempt paths: /healthz, /livez, /readyz, /metrics
+    monkeypatch.delenv("CM_RATE_LIMIT_EXEMPT_PATHS", raising=False)
+    return create_app()
+
+
+@pytest.fixture()
+def exempt_client(exempt_app):
+    return TestClient(exempt_app)
+
+
 @pytest.mark.integration
 class TestRateLimiting429:
     """Test that rate limiting returns proper HTTP 429 responses."""
 
     def test_rate_limit_returns_429(self, client):
         """Exceeding rate limit returns 429 with RFC-compliant response."""
-        # Send requests until rate limited
+        # Send requests until rate limited (limit is 10/minute, no exempt paths)
         responses = []
         for _ in range(20):
             resp = client.get("/healthz")
@@ -89,6 +110,29 @@ class TestRateLimiting429:
                 assert retry_after is not None
                 assert int(retry_after) > 0
                 break
+
+
+@pytest.mark.integration
+class TestRateLimitExemptPaths:
+    """Test that exempt paths bypass rate limiting."""
+
+    def test_healthz_exempt_when_configured(self, exempt_client):
+        """Health endpoints are not rate-limited when in exempt_paths."""
+        # With limit of 5/minute but /healthz exempt, 20 requests should all succeed
+        results = []
+        for _ in range(20):
+            resp = exempt_client.get("/healthz")
+            results.append(resp.status_code)
+
+        assert all(code == 200 for code in results), (
+            f"Expected all 200s for exempt path, got: {set(results)}"
+        )
+
+    def test_livez_exempt_when_configured(self, exempt_client):
+        """livez is also exempt from rate limiting."""
+        for _ in range(20):
+            resp = exempt_client.get("/livez")
+            assert resp.status_code == 200
 
 
 @pytest.mark.integration
@@ -140,24 +184,44 @@ class TestAPIKeyStoreCapacity:
             _claims, remaining = store.validate(key)
             assert remaining > 800
 
-    def test_store_rejects_over_capacity(self):
-        """Store rejects new keys when at capacity."""
-        store = APIKeyStore(_max_keys=100)
-        for i in range(100):
+    def test_store_evicts_oldest_at_capacity(self):
+        """Store evicts oldest key (LRU) when at capacity instead of rejecting."""
+        store = APIKeyStore(_max_keys=5, _max_keys_per_subject=100)
+        keys = []
+        for i in range(5):
+            raw_key, _ = store.issue({"sub": f"user-{i}"}, 900)
+            keys.append(raw_key)
+
+        # 6th key should succeed — oldest gets evicted
+        new_key, _ = store.issue({"sub": "user-new"}, 900)
+        assert store.active_count() == 5  # still at capacity
+
+        # The first key (oldest) should have been evicted
+        with pytest.raises(HTTPException) as exc_info:
+            store.validate(keys[0])
+        assert exc_info.value.status_code == 401
+
+        # The new key should be valid
+        _claims, _ = store.validate(new_key)
+
+    def test_store_rejects_when_all_eviction_fails(self):
+        """Store rejects only when eviction cannot free enough space."""
+        store = APIKeyStore(_max_keys=3, _max_keys_per_subject=100)
+        for i in range(3):
             store.issue({"sub": f"user-{i}"}, 900)
 
-        with pytest.raises(HTTPException):
-            store.issue({"sub": "overflow"}, 900)
+        # With LRU eviction, issuing another key should succeed
+        raw_key, _ = store.issue({"sub": "overflow"}, 900)
+        assert store.active_count() == 3
+        _claims, _ = store.validate(raw_key)
 
     def test_store_eviction_under_load(self):
         """Expired keys are evicted to make room for new ones."""
-        store = APIKeyStore(_max_keys=100)
+        store = APIKeyStore(_max_keys=100, _max_keys_per_subject=100)
 
         # Issue 50 keys with short TTL
         for i in range(50):
             raw_key, _ = store.issue({"sub": f"expired-{i}"}, 1)
-            from certmesh.api.apikeys import _hash_key
-
             store._keys[_hash_key(raw_key)].expires_at = time.time() - 1
 
         # Issue 50 more — eviction should happen
@@ -165,6 +229,76 @@ class TestAPIKeyStoreCapacity:
             store.issue({"sub": f"active-{i}"}, 900)
 
         assert store.active_count() == 50  # only active keys remain
+
+
+@pytest.mark.integration
+class TestPerSubjectKeyLimit:
+    """Test per-subject API key limiting."""
+
+    def test_subject_limited_to_max_keys(self):
+        """A single subject can hold at most max_keys_per_subject keys."""
+        store = APIKeyStore(_max_keys=100, _max_keys_per_subject=3)
+        keys = []
+        for _ in range(5):
+            raw_key, _ = store.issue({"sub": "user1"}, 900)
+            keys.append(raw_key)
+
+        # Only the last 3 keys should be valid (oldest 2 evicted)
+        assert store.subject_key_count("user1") == 3
+
+        # First 2 should be revoked
+        with pytest.raises(HTTPException):
+            store.validate(keys[0])
+        with pytest.raises(HTTPException):
+            store.validate(keys[1])
+
+        # Last 3 should be valid
+        for k in keys[2:]:
+            _claims, _ = store.validate(k)
+
+    def test_different_subjects_independent(self):
+        """Different subjects have independent key limits."""
+        store = APIKeyStore(_max_keys=100, _max_keys_per_subject=2)
+        store.issue({"sub": "alice"}, 900)
+        store.issue({"sub": "alice"}, 900)
+        store.issue({"sub": "bob"}, 900)
+        store.issue({"sub": "bob"}, 900)
+
+        assert store.subject_key_count("alice") == 2
+        assert store.subject_key_count("bob") == 2
+        assert store.active_count() == 4
+
+    def test_subject_key_count(self):
+        """subject_key_count returns correct count."""
+        store = APIKeyStore(_max_keys=100, _max_keys_per_subject=10)
+        store.issue({"sub": "user1"}, 900)
+        store.issue({"sub": "user1"}, 900)
+        store.issue({"sub": "user2"}, 900)
+
+        assert store.subject_key_count("user1") == 2
+        assert store.subject_key_count("user2") == 1
+        assert store.subject_key_count("unknown") == 0
+
+
+@pytest.mark.integration
+class TestAPIKeyLength:
+    """Test that API keys are sufficiently long."""
+
+    def test_key_length_minimum(self):
+        """API key should be at least 60 characters (384-bit random)."""
+        store = APIKeyStore()
+        raw_key, _ = store.issue({"sub": "user"}, 900)
+        # token_urlsafe(48) → ~64 chars
+        assert len(raw_key) >= 60, f"Key too short: {len(raw_key)} chars"
+
+    def test_key_uniqueness(self):
+        """Each issued key is unique."""
+        store = APIKeyStore()
+        keys = set()
+        for _ in range(100):
+            raw_key, _ = store.issue({"sub": "user"}, 900)
+            keys.add(raw_key)
+        assert len(keys) == 100
 
 
 @pytest.mark.integration

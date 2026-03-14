@@ -96,7 +96,9 @@ def resolve_digicert_api_key(
     path: str = vault_cfg["paths"]["digicert_api_key"]
     kv_version = int(vault_cfg.get("kv_version", 2))
     key = _vc.read_secret_versioned(vault_cl, path, "value", kv_version=kv_version)
-    logger.debug("DigiCert API key resolved from Vault path '%s' (KV v%d).", path, kv_version)
+    logger.debug(
+        "DigiCert API key resolved from Vault", extra={"path": path, "kv_version": kv_version}
+    )
     return key
 
 
@@ -128,5 +130,7 @@ def resolve_venafi_credentials(
     path: str = vault_cfg["paths"]["venafi_credentials"]
     kv_version = int(vault_cfg.get("kv_version", 2))
     data = _vc.read_all_secrets_versioned(vault_cl, path, kv_version=kv_version)
-    logger.debug("Venafi credentials resolved from Vault path '%s' (KV v%d).", path, kv_version)
+    logger.debug(
+        "Venafi credentials resolved from Vault", extra={"path": path, "kv_version": kv_version}
+    )
     return data

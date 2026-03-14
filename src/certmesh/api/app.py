@@ -64,6 +64,7 @@ def _build_api_key_config() -> APIKeyConfig:
         default_ttl_seconds=int(os.environ.get("CM_API_KEY_DEFAULT_TTL", "900")),
         max_ttl_seconds=int(os.environ.get("CM_API_KEY_MAX_TTL", "28800")),
         max_active_keys=int(os.environ.get("CM_API_KEY_MAX_ACTIVE", "10000")),
+        max_keys_per_subject=int(os.environ.get("CM_API_KEY_MAX_PER_SUBJECT", "5")),
     )
 
 
@@ -90,7 +91,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # API key exchange
     api_key_config = _build_api_key_config()
     app.state.api_key_config = api_key_config
-    app.state.api_key_store = APIKeyStore(_max_keys=api_key_config.max_active_keys)
+    app.state.api_key_store = APIKeyStore(
+        _max_keys=api_key_config.max_active_keys,
+        _max_keys_per_subject=api_key_config.max_keys_per_subject,
+    )
 
     # Vault client (optional)
     vault_cfg = cfg.get("vault", {})
@@ -102,22 +106,23 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             client = vc.create_client(vault_cfg)
             vc.authenticate(client, vault_cfg)
             app.state.vault_client = client
-            logger.info("Vault client initialized and authenticated.")
+            logger.info("Vault client initialized and authenticated")
         except Exception:
-            logger.warning("Vault client initialization failed; continuing without Vault.")
+            logger.warning("Vault client initialization failed, continuing without Vault")
 
     app.state.aws_required = False
 
     logger.info(
-        "certmesh API started (OAuth2 enabled=%s, API key exchange enabled=%s, "
-        "rate_limiting=%s, compression=%s).",
-        oauth2_config.enabled,
-        api_key_config.enabled,
-        getattr(app.state, "rate_limit_enabled", True),
-        os.environ.get("CM_COMPRESSION_ENABLED", "true"),
+        "certmesh API started",
+        extra={
+            "oauth2_enabled": oauth2_config.enabled,
+            "api_key_enabled": api_key_config.enabled,
+            "rate_limiting": getattr(app.state, "rate_limit_enabled", True),
+            "compression": os.environ.get("CM_COMPRESSION_ENABLED", "true"),
+        },
     )
     yield
-    logger.info("certmesh API shutting down.")
+    logger.info("certmesh API shutting down")
 
 
 def create_app(**kwargs: Any) -> FastAPI:

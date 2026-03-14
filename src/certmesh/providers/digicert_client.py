@@ -147,20 +147,20 @@ class _RequestIDAdapter(HTTPAdapter):
         rid = str(uuid.uuid4())
         request.headers["X-Request-ID"] = rid  # type: ignore[index]
         logger.debug(
-            "DigiCert >>> %s %s (request_id=%s)",
-            request.method,
-            request.url,
-            rid,
+            "DigiCert >>> request sent.",
+            extra={"method": request.method, "url": request.url, "request_id": rid},
         )
         response = super().send(request, *args, **kwargs)
         response.certmesh_request_id = rid  # type: ignore[attr-defined]
         response.certmesh_endpoint = str(request.url)  # type: ignore[attr-defined]
         logger.debug(
-            "DigiCert <<< HTTP %d (request_id=%s, url=%s, elapsed=%s)",
-            response.status_code,
-            rid,
-            request.url,
-            response.elapsed,
+            "DigiCert <<< response received.",
+            extra={
+                "status_code": response.status_code,
+                "request_id": rid,
+                "url": request.url,
+                "elapsed": str(response.elapsed),
+            },
         )
         return response
 
@@ -183,20 +183,27 @@ def _resolve_ca_bundle(digicert_cfg: JsonDict) -> str | bool:
     # Explicit config path takes highest priority.
     ca_bundle: str = digicert_cfg.get("ca_bundle", "")
     if ca_bundle:
-        logger.debug("Using CA bundle from config (digicert.ca_bundle): %s", ca_bundle)
+        logger.debug(
+            "Using CA bundle from config (digicert.ca_bundle).", extra={"ca_bundle": ca_bundle}
+        )
         return ca_bundle
 
     # certmesh-specific env var.
     for env_var in ("CM_CA_BUNDLE", "REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "CURL_CA_BUNDLE"):
         value = os.environ.get(env_var, "")
         if value:
-            logger.debug("Using CA bundle from environment variable %s: %s", env_var, value)
+            logger.debug(
+                "Using CA bundle from environment variable.",
+                extra={"env_var": env_var, "value": value},
+            )
             return value
 
     # Fall back to the tls_verify toggle (True / False / path string).
     tls_verify = digicert_cfg.get("tls_verify", True)
     if isinstance(tls_verify, str):
-        logger.debug("Using CA bundle from digicert.tls_verify (path): %s", tls_verify)
+        logger.debug(
+            "Using CA bundle from digicert.tls_verify (path).", extra={"tls_verify": tls_verify}
+        )
         return tls_verify
     return bool(tls_verify)
 
@@ -249,7 +256,7 @@ def _build_session(
         if k in os.environ
     }
     if env_proxies:
-        logger.info("Proxy environment detected: %s", env_proxies)
+        logger.info("Proxy environment detected.", extra={"proxies": env_proxies})
 
     # ----- Connection pooling + request ID injection -----
     pool_cfg: JsonDict = digicert_cfg.get("connection_pool", {})
@@ -304,10 +311,8 @@ def _raise_for_digicert_error(resp: requests.Response) -> None:
     if status == 429:
         retry_after = resp.headers.get("Retry-After", "")
         logger.warning(
-            "DigiCert rate limit hit (HTTP 429). Retry-After='%s', request_id=%s, endpoint=%s.",
-            retry_after,
-            request_id,
-            endpoint,
+            "DigiCert rate limit hit (HTTP 429).",
+            extra={"retry_after": retry_after, "request_id": request_id, "endpoint": endpoint},
         )
         raise DigiCertRateLimitError(
             f"DigiCert rate limit exceeded (HTTP 429). "
@@ -508,8 +513,8 @@ def _make_retry_decorator(digicert_cfg: JsonDict) -> Any:
             seconds = exc.retry_after_seconds()
             if seconds is not None and seconds > 0:
                 logger.info(
-                    "Honouring Retry-After header: waiting %.1f s before retry.",
-                    seconds,
+                    "Honouring Retry-After header: waiting before retry.",
+                    extra={"retry_after_seconds": seconds},
                 )
                 return seconds
         return exp_wait(retry_state=retry_state)
@@ -617,7 +622,7 @@ def list_issued_certificates(
         if offset >= total:
             break
 
-    logger.info("DigiCert: listed %d certificate(s).", len(all_certs))
+    logger.info("DigiCert: listed certificates.", extra={"count": len(all_certs)})
 
     # Client-side expiry filtering.
     if expires_before or expires_after:
@@ -627,8 +632,8 @@ def list_issued_certificates(
             expires_after=expires_after,
         )
         logger.debug(
-            "DigiCert: %d certificate(s) after expiry filtering.",
-            len(all_certs),
+            "DigiCert: certificates after expiry filtering.",
+            extra={"count": len(all_certs)},
         )
 
     return all_certs
@@ -738,10 +743,8 @@ def search_certificates(
         )
 
     logger.info(
-        "DigiCert: search returned %d certificate(s) (cn=%s, status=%s).",
-        len(all_certs),
-        common_name,
-        status,
+        "DigiCert: search returned certificates.",
+        extra={"count": len(all_certs), "common_name": common_name, "status": status},
     )
     return all_certs
 
@@ -820,10 +823,12 @@ def describe_certificate(
     )
 
     logger.info(
-        "DigiCert: described certificate %d (CN='%s', status='%s').",
-        certificate_id,
-        detail.common_name,
-        detail.status,
+        "DigiCert: described certificate.",
+        extra={
+            "certificate_id": certificate_id,
+            "common_name": detail.common_name,
+            "status": detail.status,
+        },
     )
     return detail
 
@@ -889,10 +894,12 @@ def download_issued_certificate(
     )
 
     logger.info(
-        "DigiCert: downloaded certificate %d (CN='%s', serial='%s').",
-        certificate_id,
-        bundle.common_name,
-        bundle.serial_number,
+        "DigiCert: downloaded certificate.",
+        extra={
+            "certificate_id": certificate_id,
+            "common_name": bundle.common_name,
+            "serial": bundle.serial_number,
+        },
     )
     return bundle
 
@@ -992,10 +999,12 @@ def order_and_await_certificate(
         )
 
     logger.info(
-        "DigiCert: submitted order %d for CN='%s' (product=%s).",
-        order_id,
-        order_request.common_name,
-        order_request.product_name_id,
+        "DigiCert: submitted order.",
+        extra={
+            "order_id": order_id,
+            "common_name": order_request.common_name,
+            "product": order_request.product_name_id,
+        },
     )
 
     # ---- 3. Poll for issuance ----
@@ -1028,9 +1037,8 @@ def order_and_await_certificate(
         if order_status == "issued" and cert_data.get("id"):
             certificate_id = int(cert_data["id"])
             logger.info(
-                "DigiCert: order %d is issued (certificate_id=%d).",
-                order_id,
-                certificate_id,
+                "DigiCert: order is issued.",
+                extra={"order_id": order_id, "certificate_id": certificate_id},
             )
             break
 
@@ -1041,12 +1049,14 @@ def order_and_await_certificate(
             )
 
         logger.debug(
-            "DigiCert: order %d status='%s', waiting %ds (elapsed=%ds/%ds).",
-            order_id,
-            order_status,
-            poll_interval,
-            elapsed,
-            max_wait,
+            "DigiCert: order polling.",
+            extra={
+                "order_id": order_id,
+                "status": order_status,
+                "interval_seconds": poll_interval,
+                "elapsed_seconds": elapsed,
+                "max_wait_seconds": max_wait,
+            },
         )
         time.sleep(poll_interval)
         elapsed += poll_interval
@@ -1161,9 +1171,8 @@ def revoke_certificate(
         ) from exc
 
     logger.info(
-        "DigiCert: revoked certificate %d (reason='%s').",
-        certificate_id,
-        reason,
+        "DigiCert: revoked certificate.",
+        extra={"certificate_id": certificate_id, "reason": reason},
     )
     return result
 
@@ -1284,8 +1293,7 @@ def duplicate_certificate(
         ) from exc
 
     logger.info(
-        "DigiCert: submitted duplicate request for order %d (CN=%s).",
-        order_id,
-        common_name or "(original)",
+        "DigiCert: submitted duplicate request for order.",
+        extra={"order_id": order_id, "common_name": common_name or "(original)"},
     )
     return result

@@ -97,7 +97,7 @@ def _auth_approle(client: hvac.Client, approle_cfg: JsonDict) -> None:
     except (Unauthorized, HvacVaultError) as exc:
         raise VaultAuthenticationError(f"Vault AppRole authentication failed: {exc}.") from exc
 
-    logger.info("Vault: authenticated via AppRole.")
+    logger.info("Vault authenticated via AppRole")
 
 
 def _auth_ldap(client: hvac.Client, ldap_cfg: JsonDict) -> None:
@@ -130,7 +130,7 @@ def _auth_ldap(client: hvac.Client, ldap_cfg: JsonDict) -> None:
             f"(mount_point='{mount_point}'): {exc}."
         ) from exc
 
-    logger.info("Vault: authenticated via LDAP as '%s'.", username)
+    logger.info("Vault authenticated via LDAP", extra={"username": username})
 
 
 def _auth_aws_iam(client: hvac.Client, aws_iam_cfg: JsonDict) -> None:
@@ -193,7 +193,7 @@ def _auth_aws_iam(client: hvac.Client, aws_iam_cfg: JsonDict) -> None:
             f"(mount_point='{mount_point}'): {exc}."
         ) from exc
 
-    logger.info("Vault: authenticated via AWS IAM (role='%s').", vault_role)
+    logger.info("Vault authenticated via AWS IAM", extra={"role": vault_role})
 
 
 # =============================================================================
@@ -212,7 +212,7 @@ def get_authenticated_client(vault_cfg: JsonDict) -> hvac.Client:
             f"Supported values: {sorted(_SUPPORTED_AUTH_METHODS)}"
         )
 
-    logger.debug("Vault: authenticating via method '%s'.", auth_method)
+    logger.debug("Vault authenticating", extra={"auth_method": auth_method})
 
     if auth_method == "approle":
         if "approle" not in vault_cfg:
@@ -311,7 +311,7 @@ def write_secret(client: hvac.Client, path: str, data: SecretData) -> None:
     except HvacVaultError as exc:
         raise VaultWriteError(f"Failed to write to Vault path '{path}': {exc}") from exc
 
-    logger.info("Vault: wrote %d field(s) to path '%s' (KV v2).", len(data), path)
+    logger.info("Vault wrote secret to KV v2", extra={"field_count": len(data), "path": path})
 
 
 # =============================================================================
@@ -381,7 +381,7 @@ def write_secret_v1(client: hvac.Client, path: str, data: SecretData) -> None:
     except HvacVaultError as exc:
         raise VaultWriteError(f"Failed to write to Vault path '{path}' (KV v1): {exc}") from exc
 
-    logger.info("Vault: wrote %d field(s) to path '%s' (KV v1).", len(data), path)
+    logger.info("Vault wrote secret to KV v1", extra={"field_count": len(data), "path": path})
 
 
 # =============================================================================
@@ -504,11 +504,13 @@ def issue_pki_certificate(
         raise VaultPKIError(f"Vault PKI issue returned no certificate for CN='{common_name}'.")
 
     logger.info(
-        "Vault PKI: issued certificate for CN='%s' (serial=%s, mount='%s', role='%s').",
-        common_name,
-        data.get("serial_number", "unknown"),
-        mount_point,
-        role_name,
+        "Vault PKI issued certificate",
+        extra={
+            "common_name": common_name,
+            "serial_number": data.get("serial_number", "unknown"),
+            "mount_point": mount_point,
+            "role_name": role_name,
+        },
     )
     return data
 
@@ -591,11 +593,13 @@ def sign_pki_certificate(
         raise VaultPKIError(f"Vault PKI sign returned no certificate for CN='{common_name}'.")
 
     logger.info(
-        "Vault PKI: signed CSR for CN='%s' (serial=%s, mount='%s', role='%s').",
-        common_name,
-        data.get("serial_number", "unknown"),
-        mount_point,
-        role_name,
+        "Vault PKI signed CSR",
+        extra={
+            "common_name": common_name,
+            "serial_number": data.get("serial_number", "unknown"),
+            "mount_point": mount_point,
+            "role_name": role_name,
+        },
     )
     return data
 
@@ -641,9 +645,8 @@ def revoke_pki_certificate(
         ) from exc
 
     logger.info(
-        "Vault PKI: revoked certificate serial='%s' (mount='%s').",
-        serial_number,
-        mount_point,
+        "Vault PKI revoked certificate",
+        extra={"serial_number": serial_number, "mount_point": mount_point},
     )
     return response.get("data", {})
 
@@ -684,7 +687,9 @@ def list_pki_certificates(
         ) from exc
 
     keys: list[str] = response.get("data", {}).get("keys", [])
-    logger.info("Vault PKI: listed %d certificate(s) (mount='%s').", len(keys), mount_point)
+    logger.info(
+        "Vault PKI listed certificates", extra={"count": len(keys), "mount_point": mount_point}
+    )
     return keys
 
 

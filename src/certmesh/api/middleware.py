@@ -195,10 +195,12 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         except Exception:
             logger.exception(
-                "Unhandled exception | request_id=%s method=%s path=%s",
-                request_id,
-                request.method,
-                request.url.path,
+                "Unhandled exception",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                },
             )
             response = JSONResponse(
                 status_code=500,
@@ -229,12 +231,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
                     response.headers["X-CertMesh-Refresh-URL"] = "/api/v1/auth/token"
 
             logger.info(
-                "%s %s -> %d (%.3fs) request_id=%s",
-                request.method,
-                endpoint,
-                status_code,
-                elapsed,
-                request_id,
+                "HTTP request completed",
+                extra={
+                    "method": request.method,
+                    "path": endpoint,
+                    "status": status_code,
+                    "duration_seconds": round(elapsed, 4),
+                    "request_id": request_id,
+                },
             )
 
         return response  # type: ignore[return-value]
@@ -251,27 +255,33 @@ def register_exception_handlers(app: FastAPI) -> None:
         # Authentication errors get special logging for auditing
         if status_code == 401:
             logger.warning(
-                "Authentication failure: %s | type=%s path=%s request_id=%s",
-                exc,
-                type(exc).__name__,
-                request.url.path,
-                request_id,
+                "Authentication failure",
+                extra={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "path": request.url.path,
+                    "request_id": request_id,
+                },
             )
         elif status_code == 403:
             logger.warning(
-                "Authorization failure: %s | type=%s path=%s request_id=%s",
-                exc,
-                type(exc).__name__,
-                request.url.path,
-                request_id,
+                "Authorization failure",
+                extra={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "path": request.url.path,
+                    "request_id": request_id,
+                },
             )
         else:
             logger.error(
-                "CertMeshError: %s | type=%s status=%d request_id=%s",
-                exc,
-                type(exc).__name__,
-                status_code,
-                request_id,
+                "CertMeshError",
+                extra={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "status": status_code,
+                    "request_id": request_id,
+                },
             )
 
         headers: dict[str, str] = {}
@@ -303,10 +313,12 @@ def register_exception_handlers(app: FastAPI) -> None:
             f"{'.'.join(str(loc) for loc in e.get('loc', []))}: {e.get('msg', '')}" for e in errors
         )
         logger.warning(
-            "Request validation error: %s | path=%s request_id=%s",
-            detail,
-            request.url.path,
-            request_id,
+            "Request validation error",
+            extra={
+                "detail": detail,
+                "path": request.url.path,
+                "request_id": request_id,
+            },
         )
         body = _build_error_body(
             422,
@@ -320,7 +332,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = getattr(request.state, "request_id", "unknown")
-        logger.exception("Unhandled error | request_id=%s", request_id)
+        logger.exception("Unhandled error", extra={"request_id": request_id})
         return JSONResponse(
             status_code=500,
             content=_build_error_body(500, "Internal server error", request_id),

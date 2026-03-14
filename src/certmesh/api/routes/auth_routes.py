@@ -116,9 +116,8 @@ async def exchange_token(
 
     subject = claims.get("sub", claims.get("client_id", "unknown"))
     logger.info(
-        "API key exchanged: subject=%s ttl=%ds",
-        subject,
-        ttl,
+        "API key exchanged via token endpoint",
+        extra={"subject": subject, "ttl_seconds": ttl},
     )
 
     return TokenExchangeResponse(
@@ -187,7 +186,7 @@ async def revoke_token(
     revoked = store.revoke(api_key)
 
     if revoked:
-        logger.info("API key revoked via /token/revoke endpoint.")
+        logger.info("API key revoked via token/revoke endpoint")
         return TokenRevokeResponse(revoked=True, message="API key has been revoked.")
 
     return TokenRevokeResponse(revoked=False, message="API key not found or already expired.")

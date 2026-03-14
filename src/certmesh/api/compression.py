@@ -49,7 +49,7 @@ def register_compression(app: FastAPI, config: CompressionConfig | None = None) 
         config = build_compression_config()
 
     if not config.enabled:
-        logger.info("Response compression is disabled.")
+        logger.info("Response compression is disabled")
         return
 
     app.add_middleware(
@@ -59,7 +59,9 @@ def register_compression(app: FastAPI, config: CompressionConfig | None = None) 
     )
 
     logger.info(
-        "GZip compression enabled: minimum_size=%d bytes, compresslevel=%d.",
-        config.minimum_size,
-        config.compresslevel,
+        "GZip compression enabled",
+        extra={
+            "minimum_size_bytes": config.minimum_size,
+            "compresslevel": config.compresslevel,
+        },
     )

@@ -262,11 +262,13 @@ def request_certificate(
 
     cert_arn: str = response["CertificateArn"]
     logger.info(
-        "ACM: requested certificate for domain='%s' (arn=%s, algo=%s, validation=%s).",
-        domain_name,
-        cert_arn,
-        effective_algorithm,
-        effective_validation,
+        "ACM: requested certificate.",
+        extra={
+            "domain": domain_name,
+            "arn": cert_arn,
+            "algorithm": effective_algorithm,
+            "validation": effective_validation,
+        },
     )
     return cert_arn
 
@@ -322,10 +324,8 @@ def describe_certificate(
     )
 
     logger.debug(
-        "ACM: described certificate arn='%s' (status=%s, domain=%s).",
-        certificate_arn,
-        detail.status,
-        detail.domain_name,
+        "ACM: described certificate.",
+        extra={"arn": certificate_arn, "status": detail.status, "domain": detail.domain_name},
     )
     return detail
 
@@ -382,7 +382,8 @@ def list_certificates(
                 summaries.append(summary)
                 if max_items is not None and len(summaries) >= max_items:
                     logger.debug(
-                        "ACM: reached max_items=%d while listing certificates.", max_items
+                        "ACM: reached max_items while listing certificates.",
+                        extra={"max_items": max_items},
                     )
                     return summaries
     except botocore.exceptions.ClientError as exc:
@@ -390,7 +391,7 @@ def list_certificates(
             f"ACM list_certificates failed: [{_boto_error_code(exc)}] {_boto_error_message(exc)}"
         ) from exc
 
-    logger.info("ACM: listed %d certificate(s).", len(summaries))
+    logger.info("ACM: listed certificates.", extra={"count": len(summaries)})
     return summaries
 
 
@@ -468,10 +469,12 @@ def export_certificate(
     )
 
     logger.info(
-        "ACM: exported certificate arn='%s' (CN=%s, serial=%s).",
-        certificate_arn,
-        bundle.common_name,
-        bundle.serial_number,
+        "ACM: exported certificate.",
+        extra={
+            "arn": certificate_arn,
+            "common_name": bundle.common_name,
+            "serial": bundle.serial_number,
+        },
     )
     return bundle
 
@@ -504,7 +507,7 @@ def delete_certificate(
             f"[{code}] {_boto_error_message(exc)}"
         ) from exc
 
-    logger.info("ACM: deleted certificate arn='%s'.", certificate_arn)
+    logger.info("ACM: deleted certificate.", extra={"arn": certificate_arn})
 
 
 # =============================================================================
@@ -538,7 +541,7 @@ def renew_certificate(
             f"[{code}] {_boto_error_message(exc)}"
         ) from exc
 
-    logger.info("ACM: triggered renewal for certificate arn='%s'.", certificate_arn)
+    logger.info("ACM: triggered renewal for certificate.", extra={"arn": certificate_arn})
 
 
 # =============================================================================
@@ -596,9 +599,8 @@ def get_validation_records(
         records.append(record)
 
     logger.info(
-        "ACM: retrieved %d validation record(s) for arn='%s'.",
-        len(records),
-        certificate_arn,
+        "ACM: retrieved validation records.",
+        extra={"count": len(records), "arn": certificate_arn},
     )
     return records
 
@@ -645,10 +647,8 @@ def wait_for_issuance(
 
     short_id = arn_short_id(certificate_arn)
     logger.info(
-        "ACM: waiting for certificate '%s' to be issued (interval=%ds, timeout=%ds).",
-        short_id,
-        interval,
-        max_wait,
+        "ACM: waiting for certificate to be issued.",
+        extra={"short_id": short_id, "interval_seconds": interval, "timeout_seconds": max_wait},
     )
 
     elapsed = 0
@@ -659,9 +659,8 @@ def wait_for_issuance(
 
         if last_status == "ISSUED":
             logger.info(
-                "ACM: certificate '%s' is now ISSUED (waited %ds).",
-                short_id,
-                elapsed,
+                "ACM: certificate is now ISSUED.",
+                extra={"short_id": short_id, "elapsed_seconds": elapsed},
             )
             return detail
 
@@ -673,12 +672,14 @@ def wait_for_issuance(
             )
 
         logger.debug(
-            "ACM: certificate '%s' status='%s', waiting %ds (elapsed=%ds/%ds).",
-            short_id,
-            last_status,
-            interval,
-            elapsed,
-            max_wait,
+            "ACM: certificate polling.",
+            extra={
+                "short_id": short_id,
+                "status": last_status,
+                "interval_seconds": interval,
+                "elapsed_seconds": elapsed,
+                "max_wait_seconds": max_wait,
+            },
         )
         time.sleep(interval)
         elapsed += interval
@@ -765,11 +766,13 @@ def issue_private_certificate(
 
     cert_arn: str = response["CertificateArn"]
     logger.info(
-        "ACM-PCA: issued certificate arn='%s' (ca='%s', algo=%s, validity=%dd).",
-        cert_arn,
-        effective_ca_arn,
-        effective_signing,
-        effective_validity,
+        "ACM-PCA: issued certificate.",
+        extra={
+            "arn": cert_arn,
+            "ca_arn": effective_ca_arn,
+            "algorithm": effective_signing,
+            "validity_days": effective_validity,
+        },
     )
     return cert_arn
 
@@ -835,9 +838,8 @@ def get_private_certificate(
         )
 
     logger.info(
-        "ACM-PCA: retrieved certificate arn='%s' (ca='%s').",
-        certificate_arn,
-        effective_ca_arn,
+        "ACM-PCA: retrieved certificate.",
+        extra={"arn": certificate_arn, "ca_arn": effective_ca_arn},
     )
     return cert_pem, chain_pem
 
@@ -894,10 +896,8 @@ def revoke_private_certificate(
         ) from exc
 
     logger.info(
-        "ACM-PCA: revoked certificate arn='%s' (serial=%s, reason=%s).",
-        certificate_arn,
-        certificate_serial,
-        revocation_reason,
+        "ACM-PCA: revoked certificate.",
+        extra={"arn": certificate_arn, "serial": certificate_serial, "reason": revocation_reason},
     )
 
 
@@ -985,9 +985,8 @@ def list_private_certificates(
         ) from exc
 
     logger.info(
-        "ACM-PCA: listed %d private certificate(s) (ca='%s').",
-        len(results),
-        effective_ca_arn,
+        "ACM-PCA: listed private certificates.",
+        extra={"count": len(results), "ca_arn": effective_ca_arn},
     )
     return results
 
@@ -1027,8 +1026,7 @@ def export_and_persist(
 
     written = cu.persist_bundle(bundle, output_cfg, vault_client=vault_client)
     logger.info(
-        "ACM: exported and persisted certificate arn='%s' -> %s.",
-        certificate_arn,
-        written,
+        "ACM: exported and persisted certificate.",
+        extra={"arn": certificate_arn, "written": written},
     )
     return written

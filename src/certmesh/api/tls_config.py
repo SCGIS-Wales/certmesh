@@ -154,22 +154,29 @@ def create_ssl_context(config: TLSConfig) -> ssl.SSLContext | None:
             certfile=config.cert_file,
             keyfile=config.key_file,
         )
-        logger.info("TLS certificate loaded: cert=%s key=%s", config.cert_file, config.key_file)
+        logger.info(
+            "TLS certificate loaded",
+            extra={"cert_file": config.cert_file, "key_file": config.key_file},
+        )
 
     # Load CA bundle for client verification (optional)
     if config.ca_file:
         try:
             ctx.load_verify_locations(config.ca_file)
-            logger.info("TLS CA bundle loaded: %s", config.ca_file)
+            logger.info("TLS CA bundle loaded", extra={"ca_file": config.ca_file})
         except Exception:
-            logger.warning("Could not load CA bundle from %s; continuing without.", config.ca_file)
+            logger.warning(
+                "Could not load CA bundle, continuing without", extra={"ca_file": config.ca_file}
+            )
 
     logger.info(
-        "TLS context created: min=%s max=%s honor_order=%s session_tickets=%s",
-        config.min_version,
-        config.max_version,
-        config.honor_cipher_order,
-        config.session_tickets,
+        "TLS context created",
+        extra={
+            "min_version": config.min_version,
+            "max_version": config.max_version,
+            "honor_cipher_order": config.honor_cipher_order,
+            "session_tickets": config.session_tickets,
+        },
     )
     return ctx
 

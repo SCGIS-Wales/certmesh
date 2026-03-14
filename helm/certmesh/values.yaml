@@ -178,6 +178,7 @@ apiKey:
   defaultTtlSeconds: 900        # 15 minutes — default key lifetime
   maxTtlSeconds: 28800          # 8 hours — maximum allowed key lifetime
   maxActiveKeys: 10000          # safeguard against memory exhaustion
+  maxKeysPerSubject: 5          # max concurrent keys per JWT subject/client
 
 # --- Rate Limiting / Throttling ---
 # Configurable rate limiting returning HTTP 429 with Retry-After header.
@@ -293,12 +294,24 @@ service:
   # AWS NLB annotations — active by default. For non-AWS deployments, set
   # service.annotations={} to clear these.  Change service.type to LoadBalancer
   # to activate the NLB.
+  #
+  # AWS NLB Security Group (uncomment to restrict inbound traffic):
+  #   service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-0123456789abcdef0"
+  #   # OR let the AWS LB Controller create a managed SG:
+  #   service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+  #
+  # external-dns annotation (uncomment to create DNS records automatically):
+  #   external-dns.alpha.kubernetes.io/hostname: "certmesh.internal.example.com"
+  #   external-dns.alpha.kubernetes.io/ttl: "300"
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
     service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
     service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
     service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+    # service.beta.kubernetes.io/aws-load-balancer-security-groups: "sg-XXXXXXXXXXXXXXXXX"
+    # external-dns.alpha.kubernetes.io/hostname: "certmesh.internal.example.com"
+    # external-dns.alpha.kubernetes.io/ttl: "300"
 
 ingress:
   enabled: false
@@ -335,6 +348,32 @@ ingress:
 
 networkPolicy:
   enabled: true
+  # --- Ingress rules (inbound traffic to certmesh) ---
+  # By default only allows traffic from within the same namespace.
+  # Set ingressCIDRs to restrict by IP range (e.g. private network only).
+  # Set allowedNamespaces to allow cross-namespace access from specific namespaces.
+  #
+  # Example: allow only internal RFC 1918 networks:
+  #   ingressCIDRs: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+  #
+  # Example: allow specific namespaces:
+  #   allowedNamespaces: ["monitoring", "ingress-nginx", "istio-system"]
+  ingressCIDRs: []
+    # - "10.0.0.0/8"         # AWS VPC default
+    # - "172.16.0.0/12"      # Private network
+    # - "192.168.0.0/16"     # Private network
+  # Kubernetes namespaces allowed to reach certmesh on the service port.
+  # Leave empty to allow only same-namespace traffic (default).
+  # Add namespace names to permit cross-namespace ingress.
+  allowedNamespaces: []
+    # - "monitoring"          # Prometheus scraping
+    # - "ingress-nginx"       # Ingress controller
+    # - "istio-system"        # Service mesh
+  # Application ports open for inbound traffic
+  ingressPorts:
+    - port: 8000
+      protocol: TCP
+  # --- Egress rules (outbound traffic from certmesh) ---
   # Allowed egress destinations
   egressCIDRs:
     - "0.0.0.0/0"  # Override with specific CIDRs in production
@@ -419,7 +458,7 @@ vaultPkiTls:
   roleName: "certmesh-server"    # Role name on the issuing PKI engine
   commonName: "certmesh.internal.example.com"
   sans: []                       # e.g. ["certmesh-0.internal.example.com"]
-  ttl: "720h"                    # 30 days
+  ttl: "8760h"                   # 365 days
   # --- CA chain: intermediate + root (used by initContainer method) ---
   # The init container fetches CA certs from these PKI engines and
   # concatenates them into a single ca-bundle.crt (intermediate first, root last).

@@ -5,8 +5,8 @@ certmesh.api.auth
 OAuth2 Bearer token (JWT) validation with JWKS endpoint caching.
 Configurable via ``CM_OAUTH2_*`` environment variables or Helm values.
 
-All authentication failures are logged with structured context for
-security auditing.
+All authentication failures are logged as structured JSON with contextual
+fields for security auditing and log aggregation.
 """
 
 from __future__ import annotations
@@ -68,7 +68,10 @@ def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
         return _jwks_cache
 
     if force and (now - _jwks_cache_time) < _MIN_REFRESH_INTERVAL:
-        logger.warning("JWKS refresh throttled (last refresh < 60s ago).")
+        logger.warning(
+            "JWKS refresh throttled",
+            extra={"min_interval_seconds": _MIN_REFRESH_INTERVAL},
+        )
         return _jwks_cache
 
     try:
@@ -76,21 +79,23 @@ def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
         resp.raise_for_status()
         _jwks_cache = resp.json()
         _jwks_cache_time = now
-        logger.info("JWKS fetched from %s (%d keys).", jwks_uri, len(_jwks_cache.get("keys", [])))
+        logger.info(
+            "JWKS fetched",
+            extra={"jwks_uri": jwks_uri, "key_count": len(_jwks_cache.get("keys", []))},
+        )
     except httpx.HTTPStatusError as exc:
         logger.error(
-            "JWKS fetch failed: HTTP %d from %s",
-            exc.response.status_code,
-            jwks_uri,
+            "JWKS fetch failed",
+            extra={"status_code": exc.response.status_code, "jwks_uri": jwks_uri},
         )
         if not _jwks_cache:
             raise
     except httpx.ConnectError:
-        logger.error("JWKS fetch failed: connection refused to %s", jwks_uri)
+        logger.error("JWKS fetch failed: connection refused", extra={"jwks_uri": jwks_uri})
         if not _jwks_cache:
             raise
     except Exception:
-        logger.exception("JWKS fetch failed from %s", jwks_uri)
+        logger.exception("JWKS fetch failed", extra={"jwks_uri": jwks_uri})
         if not _jwks_cache:
             raise
     return _jwks_cache
@@ -127,9 +132,8 @@ def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> di
         )
     except jwt.ExpiredSignatureError as exc:
         logger.warning(
-            "JWT validation failed: token expired | issuer=%s audience=%s",
-            config.issuer_url,
-            config.audience,
+            "JWT validation failed: token expired",
+            extra={"issuer": config.issuer_url, "audience": config.audience},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -138,10 +142,12 @@ def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> di
         ) from exc
     except JWTError as exc:
         logger.warning(
-            "JWT validation failed: %s | issuer=%s audience=%s",
-            exc,
-            config.issuer_url,
-            config.audience,
+            "JWT validation failed",
+            extra={
+                "error": str(exc),
+                "issuer": config.issuer_url,
+                "audience": config.audience,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -167,9 +173,8 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
         unverified_header = jwt.get_unverified_header(token)
     except JWTError as exc:
         logger.warning(
-            "JWT header parse failed: %s | jwks_uri=%s",
-            exc,
-            jwks_uri,
+            "JWT header parse failed",
+            extra={"error": str(exc), "jwks_uri": jwks_uri},
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -182,16 +187,18 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
 
     if not rsa_key:
         # Key rotation — try refreshing JWKS
-        logger.info("Key ID kid=%s not found in cache; refreshing JWKS.", kid)
+        logger.info("JWKS key not in cache, refreshing", extra={"kid": kid})
         jwks = _fetch_jwks(jwks_uri, force=True)
         rsa_key = _extract_jwk(jwks, kid)
 
     if not rsa_key:
         logger.warning(
-            "JWT validation failed: no matching key for kid=%s | jwks_uri=%s keys=%d",
-            kid,
-            jwks_uri,
-            len(jwks.get("keys", [])),
+            "JWT validation failed: no matching key",
+            extra={
+                "kid": kid,
+                "jwks_uri": jwks_uri,
+                "available_keys": len(jwks.get("keys", [])),
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -207,10 +214,12 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
     if required and not required.intersection(token_scopes):
         subject = claims.get("sub", claims.get("client_id", "unknown"))
         logger.warning(
-            "Insufficient scopes: subject=%s token_scopes=%s required=%s",
-            subject,
-            sorted(token_scopes),
-            sorted(required),
+            "Insufficient scopes",
+            extra={
+                "subject": subject,
+                "token_scopes": sorted(token_scopes),
+                "required_scopes": sorted(required),
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -224,10 +233,12 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
 
     subject = claims.get("sub", claims.get("client_id", "unknown"))
     logger.info(
-        "JWT validated: subject=%s scopes=%s issuer=%s",
-        subject,
-        sorted(token_scopes),
-        claims.get("iss", ""),
+        "JWT validated",
+        extra={
+            "subject": subject,
+            "scopes": sorted(token_scopes),
+            "issuer": claims.get("iss", ""),
+        },
     )
     return claims
 
@@ -241,16 +252,18 @@ class JWTBearer(HTTPBearer):
 
     async def __call__(self, request: Request) -> dict[str, Any] | None:
         if not self.config.enabled:
-            logger.debug("OAuth2 disabled — skipping JWT validation for %s", request.url.path)
+            logger.debug(
+                "OAuth2 disabled, skipping JWT validation",
+                extra={"path": request.url.path},
+            )
             return None
 
         credentials: HTTPAuthorizationCredentials | None = await super().__call__(request)
         if credentials is None:
             client_host = request.client.host if request.client else "unknown"
             logger.warning(
-                "Missing authorization header | path=%s client=%s",
-                request.url.path,
-                client_host,
+                "Missing authorization header",
+                extra={"path": request.url.path, "client": client_host},
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
