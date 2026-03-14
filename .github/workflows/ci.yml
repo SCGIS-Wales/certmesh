@@ -225,25 +225,23 @@ jobs:
           AWS_SECRET_ACCESS_KEY: test
           LOCALSTACK_ENDPOINT: http://localhost:4566
 
-  integration-helm-k3d:
-    name: Integration - Helm + k3d
+  integration-helm-kind:
+    name: Integration - Helm + kind
     runs-on: ubuntu-latest
     needs: [lint, test, docker-build]
     steps:
       - uses: actions/checkout@v4
-      - uses: AbsaOSS/k3d-action@v2
+      - name: Create kind cluster (Kubernetes v1.34)
+        uses: helm/kind-action@v1
         with:
-          cluster-name: certmesh-ci
-          k3d-version: v5.8.3
-          args: >-
-            --image rancher/k3s:v1.34.5-k3s1
-            --wait
+          cluster_name: certmesh-ci
+          node_image: kindest/node:v1.34.3
+          wait: 60s
       - name: Verify Kubernetes version
         run: |
           set -e
           K8S_VERSION=$(kubectl version -o json | jq -r '.serverVersion.gitVersion')
           echo "Kubernetes version: ${K8S_VERSION}"
-          # Ensure k8s version >= 1.34
           MINOR=$(echo "${K8S_VERSION}" | sed 's/v[0-9]*\.\([0-9]*\)\..*/\1/')
           if [ "${MINOR}" -lt 34 ]; then
             echo "ERROR: Kubernetes version ${K8S_VERSION} is below required v1.34.0"
@@ -282,18 +280,20 @@ jobs:
           kubectl exec vault-0 -- vault write pki_int/roles/certmesh-server \
             allowed_domains="internal.example.com" allow_subdomains=true max_ttl="720h"
           echo "✓ Vault PKI engines configured (root + intermediate + role)"
-      - name: Build and import certmesh image
+      - name: Build and load certmesh image into kind
         run: |
           set -e
-          docker build -t certmesh:ci-k3d .
-          k3d image import certmesh:ci-k3d -c certmesh-ci
-          echo "✓ certmesh image built and imported into k3d"
+          docker build -t certmesh:ci-kind .
+          kind load docker-image certmesh:ci-kind --name certmesh-ci
+          echo "✓ certmesh image built and loaded into kind"
       - name: Deploy certmesh with Vault PKI TLS
         run: |
           set -e
+          kubectl create namespace certmesh || true
           helm install certmesh ./helm/certmesh \
+            --namespace certmesh \
             --set image.repository=certmesh \
-            --set image.tag=ci-k3d \
+            --set image.tag=ci-kind \
             --set image.pullPolicy=Never \
             --set replicaCount=1 \
             --set autoscaling.enabled=false \
@@ -307,26 +307,27 @@ jobs:
             --set vaultPkiTls.fetchCaChain=true \
             --set vaultPkiTls.intermediateMountPoint=pki_int \
             --set vaultPkiTls.rootMountPoint=pki \
-            --set vault.url=http://vault:8200 \
+            --set vault.url=http://vault.default.svc.cluster.local:8200 \
             --set vault.authMethod=kubernetes \
+            --set metrics.serviceMonitor.enabled=false \
             --timeout=180s
           echo "✓ Helm install succeeded"
       - name: Validate deployment is running
         run: |
           set -e
           echo "--- Waiting for pod to be scheduled ---"
-          kubectl wait --for=condition=PodScheduled pod -l app.kubernetes.io/name=certmesh --timeout=60s
+          kubectl wait --for=condition=PodScheduled pod -l app.kubernetes.io/name=certmesh \
+            -n certmesh --timeout=60s
 
           echo "--- Pod status ---"
-          kubectl get pods -l app.kubernetes.io/name=certmesh -o wide
+          kubectl get pods -n certmesh -o wide
 
           echo "--- Init container logs ---"
-          # Wait briefly for init container to start
           sleep 5
-          INIT_LOGS=$(kubectl logs -l app.kubernetes.io/name=certmesh -c vault-tls-init --tail=100 2>&1) || true
+          INIT_LOGS=$(kubectl logs -l app.kubernetes.io/name=certmesh -n certmesh \
+            -c vault-tls-init --tail=100 2>&1) || true
           echo "${INIT_LOGS}"
 
-          # Validate init container produced expected log output
           if echo "${INIT_LOGS}" | grep -q "vault-tls-init"; then
             echo "✓ Init container vault-tls-init produced log output"
           else
@@ -334,10 +335,10 @@ jobs:
           fi
 
           echo "--- Describe pods for debugging ---"
-          kubectl describe pods -l app.kubernetes.io/name=certmesh
+          kubectl describe pods -l app.kubernetes.io/name=certmesh -n certmesh
 
           # Check that no pods are in CrashLoopBackOff or Error state
-          FAILED_PODS=$(kubectl get pods -l app.kubernetes.io/name=certmesh \
+          FAILED_PODS=$(kubectl get pods -l app.kubernetes.io/name=certmesh -n certmesh \
             -o jsonpath='{.items[*].status.containerStatuses[*].state.waiting.reason}' 2>/dev/null || echo "")
           if echo "${FAILED_PODS}" | grep -qE "CrashLoopBackOff|ErrImagePull|ImagePullBackOff"; then
             echo "ERROR: Pod is in a failed state: ${FAILED_PODS}"

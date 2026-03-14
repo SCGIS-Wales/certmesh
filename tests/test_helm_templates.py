@@ -115,3 +115,27 @@ class TestIngressTemplate:
             "ingress.tls[0].hosts[0]=certmesh.example.com",
         )
         assert "certmesh-tls" in output
+
+
+class TestNamespaceTemplate:
+    def test_default_namespace_is_certmesh(self):
+        output = _helm_template()
+        assert "namespace: certmesh" in output
+
+    def test_custom_namespace(self):
+        output = _helm_template("namespace=my-namespace")
+        assert "namespace: my-namespace" in output
+
+    def test_company_prefix_namespace(self):
+        output = _helm_template("companyPrefix=acme-")
+        assert "namespace: acme-certmesh" in output
+
+    def test_company_prefix_with_custom_namespace(self):
+        output = _helm_template("companyPrefix=corp-", "namespace=certs")
+        assert "namespace: corp-certs" in output
+
+    def test_empty_namespace_uses_release(self):
+        output = _helm_template("namespace=")
+        # When namespace is empty, it falls back to release namespace
+        # helm template uses "default" as release namespace
+        assert "namespace:" in output

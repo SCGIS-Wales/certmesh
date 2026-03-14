@@ -3,6 +3,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: {{ include "certmesh.fullname" . }}-renewal
+  namespace: {{ include "certmesh.namespace" . }}
   labels:
     {{- include "certmesh.labels" . | nindent 4 }}
 spec:
