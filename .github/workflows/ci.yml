@@ -173,7 +173,7 @@ jobs:
         run: |
           set -e
           pip install -e ".[dev,integration]"
-          python -c "import vcert; print(f'vcert version: {vcert.__version__}')"
+          python -c "import vcert; print('vcert imported successfully')"
       - name: Run Venafi VCert integration tests
         run: |
           set -e
@@ -235,7 +235,7 @@ jobs:
         with:
           cluster-name: certmesh-ci
           args: >-
-            --image rancher/k3s:v1.34.0-k3s1
+            --image rancher/k3s:v1.34.5-k3s1
             --wait
       - name: Verify Kubernetes version
         run: |
