@@ -3,10 +3,17 @@ certmesh.api.routes.digicert
 ==============================
 
 DigiCert CertCentral API endpoints.
+
+Each handler extracts ``digicert_cfg``, ``vault_cfg``, and ``vault_client``
+from ``request.app.state`` and forwards them to the provider functions in
+``certmesh.providers.digicert_client``.
+
+Spec reference: https://dev.digicert.com/en/certcentral-apis.html
 """
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
@@ -29,6 +36,14 @@ def _get_auth(request: Request) -> JWTBearer:
     return request.app.state.jwt_bearer
 
 
+def _extract_digicert_deps(request: Request) -> tuple[dict, dict, Any]:
+    """Extract DigiCert config, Vault config, and Vault client from app state."""
+    digicert_cfg = request.app.state.config["digicert"]
+    vault_cfg = request.app.state.config.get("vault", {})
+    vault_cl = getattr(request.app.state, "vault_client", None)
+    return digicert_cfg, vault_cfg, vault_cl
+
+
 @router.get("/certificates", response_model=PaginatedResponse)
 async def list_certificates(
     request: Request,
@@ -36,18 +51,31 @@ async def list_certificates(
     per_page: int = 20,
     claims: Any = Depends(_get_auth),
 ) -> PaginatedResponse:
-    """List issued certificates."""
+    """List issued certificates.
+
+    Calls ``dc.list_issued_certificates`` which paginates through
+    ``GET /order/certificate`` on the DigiCert CertCentral API.
+    """
     from certmesh.providers import digicert_client as dc
 
-    cfg = request.app.state.config["digicert"]
-    session = dc._build_session(cfg)
-    data = dc.list_issued_certificates(session, cfg, page=page, per_page=per_page)
+    digicert_cfg, vault_cfg, vault_cl = _extract_digicert_deps(request)
+    certs = dc.list_issued_certificates(
+        digicert_cfg,
+        vault_cfg,
+        vault_cl,
+        page_size=per_page,
+    )
+    # Convert dataclass instances to dicts for the paginated response.
+    items = [dataclasses.asdict(c) for c in certs]
+    # Client-side pagination slice (the provider fetches all pages internally).
+    start = (page - 1) * per_page
+    page_items = items[start : start + per_page]
     CERTIFICATE_OPS_TOTAL.labels(provider="digicert", operation="list", status="success").inc()
     return PaginatedResponse(
-        items=data.get("certificates", []),
+        items=page_items,
         page=page,
         per_page=per_page,
-        total=data.get("total", 0),
+        total=len(items),
     )
 
 
@@ -57,46 +85,56 @@ async def search_certificates(
     body: DigiCertSearchRequest,
     claims: Any = Depends(_get_auth),
 ) -> PaginatedResponse:
-    """Search certificates by criteria."""
+    """Search certificates by criteria.
+
+    Calls ``dc.search_certificates`` which forwards server-side filters
+    (``common_name``, ``status``) to ``GET /order/certificate?filters[...]=``.
+    """
     from certmesh.providers import digicert_client as dc
 
-    cfg = request.app.state.config["digicert"]
-    session = dc._build_session(cfg)
-    data = dc.search_certificates(
-        session,
-        cfg,
-        common_name=body.common_name,
-        status=body.status,
-        page=body.page,
-        per_page=body.per_page,
+    digicert_cfg, vault_cfg, vault_cl = _extract_digicert_deps(request)
+    certs = dc.search_certificates(
+        digicert_cfg,
+        vault_cfg,
+        vault_cl,
+        common_name=body.common_name or None,
+        status=body.status or None,
     )
+    items = [dataclasses.asdict(c) for c in certs]
+    start = (body.page - 1) * body.per_page
+    page_items = items[start : start + body.per_page]
     CERTIFICATE_OPS_TOTAL.labels(provider="digicert", operation="search", status="success").inc()
     return PaginatedResponse(
-        items=data.get("certificates", []),
+        items=page_items,
         page=body.page,
         per_page=body.per_page,
-        total=data.get("total", 0),
+        total=len(items),
     )
 
 
-@router.get("/certificates/{order_id}", response_model=DigiCertCertificateResponse)
+@router.get("/certificates/{certificate_id}", response_model=DigiCertCertificateResponse)
 async def get_certificate(
     request: Request,
-    order_id: str,
+    certificate_id: int,
     claims: Any = Depends(_get_auth),
 ) -> DigiCertCertificateResponse:
-    """Get details of a specific certificate order."""
+    """Get details of a specific certificate.
+
+    Calls ``dc.describe_certificate`` which maps to
+    ``GET /order/certificate/{id}`` on the DigiCert API.
+    """
     from certmesh.providers import digicert_client as dc
 
-    cfg = request.app.state.config["digicert"]
-    session = dc._build_session(cfg)
-    data = dc.describe_certificate(session, cfg, order_id)
+    digicert_cfg, vault_cfg, vault_cl = _extract_digicert_deps(request)
+    detail = dc.describe_certificate(digicert_cfg, vault_cfg, vault_cl, certificate_id)
     CERTIFICATE_OPS_TOTAL.labels(provider="digicert", operation="describe", status="success").inc()
     return DigiCertCertificateResponse(
-        order_id=str(data.get("id", order_id)),
-        common_name=data.get("certificate", {}).get("common_name", ""),
-        status=data.get("status", ""),
-        serial_number=data.get("certificate", {}).get("serial_number", ""),
+        order_id=str(detail.order_id),
+        common_name=detail.common_name,
+        status=detail.status,
+        serial_number=detail.serial_number,
+        valid_from=detail.valid_from,
+        valid_till=detail.valid_till,
     )
 
 
@@ -106,14 +144,17 @@ async def order_certificate(
     body: DigiCertOrderRequest,
     claims: Any = Depends(_get_auth),
 ) -> DigiCertOrderResponse:
-    """Order a new certificate and await issuance."""
-    from certmesh.certificate_utils import SubjectInfo
+    """Order a new certificate and await issuance.
+
+    Builds an ``OrderRequest``, then calls ``dc.order_and_await_certificate``
+    which submits to ``POST /order/certificate/{product_name_id}`` and polls
+    until the certificate is issued.
+    """
     from certmesh.providers import digicert_client as dc
 
-    cfg = request.app.state.config["digicert"]
-    vault_cl = getattr(request.app.state, "vault_client", None)
+    digicert_cfg, vault_cfg, vault_cl = _extract_digicert_deps(request)
 
-    subject = SubjectInfo(
+    order_req = dc.OrderRequest(
         common_name=body.common_name,
         san_dns_names=body.san_dns_names,
         organisation=body.organisation,
@@ -121,35 +162,47 @@ async def order_certificate(
         country=body.country,
         state=body.state,
         locality=body.locality,
+        product_name_id=body.product_name_id,
+        validity_years=body.validity_years,
+        validity_days=body.validity_days,
+        payment_method=body.payment_method,
+        dcv_method=body.dcv_method,
     )
 
-    result = dc.order_and_await_certificate(
-        cfg,
-        subject,
-        vault_client=vault_cl,
-    )
+    bundle = dc.order_and_await_certificate(digicert_cfg, vault_cfg, vault_cl, order_req)
     CERTIFICATE_OPS_TOTAL.labels(provider="digicert", operation="order", status="success").inc()
     return DigiCertOrderResponse(
-        order_id=str(result.get("order_id", "")),
-        common_name=body.common_name,
-        serial_number=result.get("serial_number", ""),
-        not_after=result.get("not_after", ""),
-        written_to=result.get("written_to", {}),
+        order_id=bundle.source_id,
+        common_name=bundle.common_name,
+        serial_number=bundle.serial_number,
+        not_after=bundle.not_after.isoformat() if bundle.not_after else "",
     )
 
 
 @router.post("/certificates/{order_id}/revoke")
 async def revoke_certificate(
     request: Request,
-    order_id: str,
+    order_id: int,
     body: DigiCertRevokeRequest,
     claims: Any = Depends(_get_auth),
 ) -> dict[str, str]:
-    """Revoke a certificate."""
+    """Revoke a certificate by order ID.
+
+    Calls ``dc.revoke_certificate`` which maps to
+    ``PUT /certificate/{id}/revoke`` on the DigiCert API.
+    The ``revocation_reason`` field name and valid reason codes follow the
+    CertCentral API v2 spec.
+    """
     from certmesh.providers import digicert_client as dc
 
-    cfg = request.app.state.config["digicert"]
-    session = dc._build_session(cfg)
-    dc.revoke_certificate(session, cfg, order_id, reason=body.reason, comments=body.comments)
+    digicert_cfg, vault_cfg, vault_cl = _extract_digicert_deps(request)
+    dc.revoke_certificate(
+        digicert_cfg,
+        vault_cfg,
+        vault_cl,
+        order_id=order_id,
+        reason=body.reason,
+        comments=body.comments,
+    )
     CERTIFICATE_OPS_TOTAL.labels(provider="digicert", operation="revoke", status="success").inc()
-    return {"status": "revoked", "order_id": order_id}
+    return {"status": "revoked", "order_id": str(order_id)}

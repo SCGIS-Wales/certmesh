@@ -45,7 +45,11 @@ class ReadinessResponse(BaseModel):
 
 
 class DigiCertOrderRequest(BaseModel):
-    """Request body for ordering a DigiCert certificate."""
+    """Request body for ordering a DigiCert certificate.
+
+    Uses ``order_validity`` (``years`` or ``days``) per CertCentral API v2 spec.
+    Max certificate validity is 199 days as of Feb 2026.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
@@ -57,7 +61,10 @@ class DigiCertOrderRequest(BaseModel):
     state: str = ""
     locality: str = ""
     validity_years: int = 1
+    validity_days: int | None = None  # Alternative to years; max 199
     product_name_id: str = "ssl_plus"
+    payment_method: str = "balance"  # "balance" or "card"
+    dcv_method: str = ""  # "dns-txt-token", "dns-cname-token", "email", "http-token"
 
 
 class DigiCertCertificateResponse(BaseModel):
@@ -78,9 +85,16 @@ class DigiCertOrderResponse(BaseModel):
 
 
 class DigiCertRevokeRequest(BaseModel):
+    """Request body for revoking a DigiCert certificate.
+
+    Valid reasons per CertCentral API v2 spec: ``unspecified``,
+    ``key_compromise``, ``affiliation_change``, ``superseded``,
+    ``cessation_of_operation``.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    reason: str = "cessation_of_operation"
+    reason: str = "unspecified"
     comments: str = ""
 
 
