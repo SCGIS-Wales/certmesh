@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [3.0.7] - 2026-03-14
+
+### Fixed
+- **Refactor init container**: Move 100-line inline shell script from `deployment.yaml` into a ConfigMap-mounted `vault-tls-init.sh`. Cleaner, testable, runtime-configurable via env vars. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Vault 1.21**: Update from 1.15 to latest stable (1.21.4) in both init container and CI. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Token TTL fix**: Parse numeric TTL from `vault token lookup` JSON — now displays `3600s (1h 0m)` instead of `unknown`. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Performance tests in-cluster**: Move capacity/perf tests into the Helm+kind job so they run against the actual deployed pod. Tests: sequential throughput (100 req), concurrent (50 parallel), readiness, response headers. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Resilient probes**: Startup 90s max, liveness 30s restart threshold, readiness 15s unready with `successThreshold: 2` anti-flap. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **K8s 1.34 per-container restart policy**: Init container uses `restartPolicy: Never` — if TLS init fails, pod fails immediately (no CrashLoopBackOff). ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Gunicorn auto-detect workers**: `"auto" = 2 x CPU cores + 1` (respects cgroup quota). Overridable via `api.workers` in values.yaml. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Vault client warning fix**: Pass `vault.enabled=true` in CI, add KV v2 engine + policy, improve error logging with context. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Clean values.yaml**: Remove duplicate sections from bad merge, format TLS ciphers as YAML array, add `vaultImage` setting. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+- **Fix CI**: Remove duplicate `integration-capacity` job, add `fix/**` to push triggers. ([#8](https://github.com/SCGIS-Wales/certmesh/pull/8))
+
 ## [3.0.6] - 2026-03-14
 
 ### Added
@@ -46,7 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...HEAD
+[3.0.7]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...v3.0.7
 [3.0.6]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.5...v3.0.6
 [3.0.5]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.0...v3.0.5
 [3.0.0]: https://github.com/SCGIS-Wales/certmesh/releases/tag/v3.0.0
