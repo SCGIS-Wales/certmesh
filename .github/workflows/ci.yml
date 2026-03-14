@@ -217,13 +217,15 @@ jobs:
           kubectl exec vault-0 -- vault write pki/root/generate/internal \
             common_name="Test Root CA" ttl=87600h
           kubectl exec vault-0 -- vault secrets enable -path=pki_int pki
-          kubectl exec vault-0 -- sh -c 'vault write -format=json \
+          # Generate intermediate CSR — run jq on runner, not inside the pod
+          kubectl exec vault-0 -- vault write -format=json \
             pki_int/intermediate/generate/internal \
-            common_name="Test Intermediate CA" | jq -r ".data.csr"' > /tmp/int.csr
+            common_name="Test Intermediate CA" | jq -r ".data.csr" > /tmp/int.csr
           kubectl cp /tmp/int.csr vault-0:/tmp/int.csr
-          kubectl exec vault-0 -- sh -c 'vault write -format=json \
+          # Sign intermediate with root — run jq on runner
+          kubectl exec vault-0 -- vault write -format=json \
             pki/root/sign-intermediate csr=@/tmp/int.csr ttl=43800h \
-            | jq -r ".data.certificate"' > /tmp/int.crt
+            | jq -r ".data.certificate" > /tmp/int.crt
           kubectl cp /tmp/int.crt vault-0:/tmp/int.crt
           kubectl exec vault-0 -- vault write pki_int/intermediate/set-signed certificate=@/tmp/int.crt
           kubectl exec vault-0 -- vault write pki_int/roles/certmesh-server \

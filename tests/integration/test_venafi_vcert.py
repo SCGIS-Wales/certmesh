@@ -30,7 +30,9 @@ def fake_connector():
     if not HAS_VCERT:
         pytest.skip("vcert package not installed (pip install vcert)")
     conn = venafi_connection(fake=True)
-    conn.authenticate()
+    # FakeConnection does not require authentication; only call if available
+    if hasattr(conn, "authenticate"):
+        conn.authenticate()
     return conn
 
 
