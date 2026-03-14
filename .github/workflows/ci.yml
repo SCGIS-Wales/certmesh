@@ -711,10 +711,16 @@ jobs:
           # Update __init__.py version
           sed -i "s/^__version__ = \".*\"/__version__ = \"$VERSION\"/" src/certmesh/__init__.py
 
+          # Update sonar-project.properties version (REL-05)
+          sed -i "s/^sonar.projectVersion=.*/sonar.projectVersion=$VERSION/" sonar-project.properties
+
+          # Update Helm chart appVersion (REL-05)
+          sed -i "s/^appVersion: \".*\"/appVersion: \"$VERSION\"/" helm/certmesh/Chart.yaml
+
           # Commit the version bump
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml src/certmesh/__init__.py
+          git add pyproject.toml src/certmesh/__init__.py sonar-project.properties helm/certmesh/Chart.yaml
           if git diff --cached --quiet; then
             echo "Version files already up to date"
           else

@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
+from certmesh import __version__
 from certmesh.api.apikeys import APIKeyConfig, APIKeyStore
 from certmesh.api.auth import JWTBearer, OAuth2Config
 from certmesh.api.compression import build_compression_config, register_compression
@@ -141,13 +142,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(**kwargs: Any) -> FastAPI:
     """FastAPI application factory."""
+    # SEC-05: Disable OpenAPI docs in production unless explicitly enabled
+    docs_enabled = os.environ.get("CM_DOCS_ENABLED", "false").lower() in ("1", "true", "yes")
+
     app = FastAPI(
         title="certmesh",
         description="TLS certificate lifecycle management API",
-        version="3.2.0",
+        version=__version__,
         lifespan=_lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
     )
 
     # Middleware (order matters — outermost first)
@@ -157,12 +161,22 @@ def create_app(**kwargs: Any) -> FastAPI:
     cors_origins = os.environ.get("CM_API_CORS_ORIGINS", "").split(",")
     cors_origins = [o.strip() for o in cors_origins if o.strip()]
     if cors_origins:
+        # SEC-06: Restrict CORS to specific methods and headers instead of wildcards
+        cors_methods = os.environ.get("CM_API_CORS_METHODS", "GET,POST,PUT,DELETE,OPTIONS").split(
+            ","
+        )
+        cors_methods = [m.strip() for m in cors_methods if m.strip()]
+        cors_headers = os.environ.get(
+            "CM_API_CORS_HEADERS",
+            "Authorization,Content-Type,X-API-Key,X-Request-ID",
+        ).split(",")
+        cors_headers = [h.strip() for h in cors_headers if h.strip()]
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=cors_methods,
+            allow_headers=cors_headers,
         )
 
     # GZip compression (enabled by default)

@@ -74,14 +74,27 @@ class _ExemptPathsMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+_TRUSTED_PROXY_COUNT: int = int(os.environ.get("CM_TRUSTED_PROXY_COUNT", "1"))
+
+
 def _key_func(request: Request) -> str:
     """Extract client identifier for rate limiting.
 
-    Priority: X-Forwarded-For → X-Real-IP → remote address.
+    SEC-07: Use the rightmost non-proxy IP from X-Forwarded-For instead of
+    blindly trusting the leftmost entry (which can be spoofed by clients).
+
+    With ``CM_TRUSTED_PROXY_COUNT=N``, the Nth entry from the right is used
+    (default 1 = last proxy-appended entry, i.e. the client IP as seen by
+    the first trusted reverse proxy).
+
+    Fallback: X-Real-IP → remote address.
     """
     forwarded = request.headers.get("X-Forwarded-For")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",")]
+        # Use rightmost trusted entry: index from the end
+        idx = min(_TRUSTED_PROXY_COUNT, len(parts))
+        return parts[-idx]
     real_ip = request.headers.get("X-Real-IP")
     if real_ip:
         return real_ip
