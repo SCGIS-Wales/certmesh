@@ -43,7 +43,7 @@ spec:
               {{- include "certmesh.selectorLabels" $ | nindent 14 }}
         {{- end }}
       {{- end }}
-      {{- if .Values.vaultPkiTls.enabled }}
+      {{- if and .Values.vaultPkiTls.enabled (ne (default "initContainer" .Values.vaultPkiTls.method) "certManager") }}
       initContainers:
         - name: vault-tls-init
           image: hashicorp/vault:1.15
@@ -289,9 +289,16 @@ spec:
         {{- end }}
         {{- if .Values.vaultPkiTls.enabled }}
         - name: vault-tls
+          {{- if eq (default "initContainer" .Values.vaultPkiTls.method) "certManager" }}
+          # cert-manager provisions the TLS Secret; we just mount it
+          secret:
+            secretName: {{ .Values.vaultPkiTls.certManagerSecretName | default "certmesh-tls" }}
+          {{- else }}
+          # initContainer writes certs to this emptyDir
           emptyDir:
             medium: Memory
             sizeLimit: 1Mi
+          {{- end }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

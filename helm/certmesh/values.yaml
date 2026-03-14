@@ -280,14 +280,56 @@ networkPolicy:
 #     allowed_domains="internal.example.com" allow_subdomains=true max_ttl="720h"
 vaultPkiTls:
   enabled: false
+  # --- TLS provisioning method ---
+  # "initContainer" : (default) the built-in init container issues a fresh cert
+  #                    from Vault PKI on every pod start (zero external dependencies)
+  # "certManager"   : cert-manager's vault-issuer provisions the cert as a K8s
+  #                    Secret; the deployment just mounts the Secret. You must
+  #                    install cert-manager and create a ClusterIssuer / Issuer
+  #                    pointing to the Vault PKI engine before enabling this.
+  #
+  # Example cert-manager ClusterIssuer (Vault PKI):
+  #   apiVersion: cert-manager.io/v1
+  #   kind: ClusterIssuer
+  #   metadata:
+  #     name: vault-pki-issuer
+  #   spec:
+  #     vault:
+  #       server: https://vault.example.com
+  #       path: pki_int/sign/certmesh-server
+  #       auth:
+  #         kubernetes:
+  #           role: certmesh
+  #           mountPath: /v1/auth/kubernetes
+  #           serviceAccountRef:
+  #             name: certmesh
+  #
+  # Example Certificate resource:
+  #   apiVersion: cert-manager.io/v1
+  #   kind: Certificate
+  #   metadata:
+  #     name: certmesh-tls
+  #   spec:
+  #     secretName: certmesh-tls
+  #     issuerRef:
+  #       name: vault-pki-issuer
+  #       kind: ClusterIssuer
+  #     commonName: certmesh.internal.example.com
+  #     dnsNames:
+  #       - certmesh.internal.example.com
+  method: "initContainer"        # "initContainer" or "certManager"
+  # --- cert-manager settings (only when method=certManager) ---
+  # When using cert-manager, provide the Secret name that cert-manager populates.
+  # cert-manager handles renewal automatically via its own controller.
+  certManagerSecretName: "certmesh-tls"  # K8s Secret created by cert-manager Certificate resource
   certType: "leaf"               # "leaf" = server certificate
-  # --- Issuing PKI engine (issues the leaf cert) ---
+  # --- Issuing PKI engine (issues the leaf cert — used by initContainer method) ---
   mountPoint: "pki_int"          # Vault PKI mount for issuing certs (typically intermediate)
   roleName: "certmesh-server"    # Role name on the issuing PKI engine
   commonName: "certmesh.internal.example.com"
   sans: []                       # e.g. ["certmesh-0.internal.example.com"]
   ttl: "720h"                    # 30 days
-  # --- CA chain: intermediate + root ---
+  # --- CA chain: intermediate + root (used by initContainer method) ---
   # The init container fetches CA certs from these PKI engines and
   # concatenates them into a single ca-bundle.crt (intermediate first, root last).
   intermediateMountPoint: "pki_int"  # PKI mount that has the intermediate CA cert
