@@ -4,6 +4,9 @@ certmesh.api.auth
 
 OAuth2 Bearer token (JWT) validation with JWKS endpoint caching.
 Configurable via ``CM_OAUTH2_*`` environment variables or Helm values.
+
+All authentication failures are logged with structured context for
+security auditing.
 """
 
 from __future__ import annotations
@@ -74,8 +77,20 @@ def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
         _jwks_cache = resp.json()
         _jwks_cache_time = now
         logger.info("JWKS fetched from %s (%d keys).", jwks_uri, len(_jwks_cache.get("keys", [])))
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "JWKS fetch failed: HTTP %d from %s",
+            exc.response.status_code,
+            jwks_uri,
+        )
+        if not _jwks_cache:
+            raise
+    except httpx.ConnectError:
+        logger.error("JWKS fetch failed: connection refused to %s", jwks_uri)
+        if not _jwks_cache:
+            raise
     except Exception:
-        logger.exception("Failed to fetch JWKS from %s", jwks_uri)
+        logger.exception("JWKS fetch failed from %s", jwks_uri)
         if not _jwks_cache:
             raise
     return _jwks_cache
@@ -111,14 +126,27 @@ def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> di
             issuer=config.issuer_url,
         )
     except jwt.ExpiredSignatureError as exc:
+        logger.warning(
+            "JWT validation failed: token expired | issuer=%s audience=%s",
+            config.issuer_url,
+            config.audience,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
+            detail="Token has expired. Please obtain a new JWT and retry.",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
     except JWTError as exc:
+        logger.warning(
+            "JWT validation failed: %s | issuer=%s audience=%s",
+            exc,
+            config.issuer_url,
+            config.audience,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Token validation failed: {exc}",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
 
 
@@ -138,9 +166,15 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
     try:
         unverified_header = jwt.get_unverified_header(token)
     except JWTError as exc:
+        logger.warning(
+            "JWT header parse failed: %s | jwks_uri=%s",
+            exc,
+            jwks_uri,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token header: {exc}",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
 
     kid = unverified_header.get("kid")
@@ -148,25 +182,53 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
 
     if not rsa_key:
         # Key rotation — try refreshing JWKS
+        logger.info("Key ID kid=%s not found in cache; refreshing JWKS.", kid)
         jwks = _fetch_jwks(jwks_uri, force=True)
         rsa_key = _extract_jwk(jwks, kid)
 
     if not rsa_key:
+        logger.warning(
+            "JWT validation failed: no matching key for kid=%s | jwks_uri=%s keys=%d",
+            kid,
+            jwks_uri,
+            len(jwks.get("keys", [])),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"No matching key found for kid={kid}",
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         )
 
     claims = _decode_jwt(token, rsa_key, config)
 
     # Scope check
     required = set(config.required_scopes)
-    if required and not required.intersection(_extract_scopes(claims)):
+    token_scopes = _extract_scopes(claims)
+    if required and not required.intersection(token_scopes):
+        subject = claims.get("sub", claims.get("client_id", "unknown"))
+        logger.warning(
+            "Insufficient scopes: subject=%s token_scopes=%s required=%s",
+            subject,
+            sorted(token_scopes),
+            sorted(required),
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Insufficient scopes. Required: {sorted(required)}",
+            detail=f"Insufficient scopes. Required: {sorted(required)}. "
+            f"Token has: {sorted(token_scopes)}.",
+            headers={
+                "WWW-Authenticate": f'Bearer error="insufficient_scope", '
+                f'scope="{" ".join(sorted(required))}"'
+            },
         )
 
+    subject = claims.get("sub", claims.get("client_id", "unknown"))
+    logger.info(
+        "JWT validated: subject=%s scopes=%s issuer=%s",
+        subject,
+        sorted(token_scopes),
+        claims.get("iss", ""),
+    )
     return claims
 
 
@@ -179,15 +241,24 @@ class JWTBearer(HTTPBearer):
 
     async def __call__(self, request: Request) -> dict[str, Any] | None:
         if not self.config.enabled:
+            logger.debug("OAuth2 disabled — skipping JWT validation for %s", request.url.path)
             return None
 
         credentials: HTTPAuthorizationCredentials | None = await super().__call__(request)
         if credentials is None:
+            client_host = request.client.host if request.client else "unknown"
+            logger.warning(
+                "Missing authorization header | path=%s client=%s",
+                request.url.path,
+                client_host,
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing authorization header",
+                detail="Missing authorization header. Provide Bearer token or X-API-Key.",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         claims = _validate_token(credentials.credentials, self.config)
         # Stash claims in request state for audit logging
         request.state.oauth2_claims = claims
+        request.state.auth_method = "jwt"
         return claims
