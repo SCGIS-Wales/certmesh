@@ -199,6 +199,15 @@ metrics:
 service:
   type: ClusterIP
   port: 8000
+  # AWS NLB annotations — active by default. For non-AWS deployments, set
+  # service.annotations={} to clear these.  Change service.type to LoadBalancer
+  # to activate the NLB.
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internal"
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
 
 ingress:
   enabled: false
@@ -220,8 +229,9 @@ ingress:
     # alb.ingress.kubernetes.io/certificate-arn: "<acm-certificate-arn>"
     # alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
     #
-    # Note: AWS NLB is typically configured at the Service level (service.annotations),
-    # not on an Ingress resource.
+    # --- AWS NLB ---
+    # NLB is typically configured at the Service level (service.annotations),
+    # not on an Ingress resource. See service.annotations above.
   hosts:
     - host: certmesh.internal.example.com
       paths:
