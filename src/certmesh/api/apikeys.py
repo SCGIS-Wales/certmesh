@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -84,6 +85,7 @@ class APIKeyStore:
     _keys: dict[str, _StoredKey] = field(default_factory=dict)
     _max_keys: int = 10_000
     _max_keys_per_subject: int = MAX_KEYS_PER_SUBJECT
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def issue(
         self,
@@ -96,46 +98,47 @@ class APIKeyStore:
         """
         subject = claims.get("sub", claims.get("client_id", "unknown"))
 
-        # --- Per-subject limiting: evict oldest key for this subject ---
-        self._enforce_subject_limit(subject)
+        with self._lock:
+            # --- Per-subject limiting: evict oldest key for this subject ---
+            self._enforce_subject_limit(subject)
 
-        # --- Global capacity: evict expired, then oldest active ---
-        self._evict_expired()
-        if len(self._keys) >= self._max_keys:
-            self._evict_oldest_active()
+            # --- Global capacity: evict expired, then oldest active ---
+            self._evict_expired()
+            if len(self._keys) >= self._max_keys:
+                self._evict_oldest_active()
 
-        if len(self._keys) >= self._max_keys:
-            logger.warning(
-                "API key store at capacity after eviction — rejecting new key",
-                extra={"max_keys": self._max_keys, "active_keys": len(self._keys)},
+            if len(self._keys) >= self._max_keys:
+                logger.warning(
+                    "API key store at capacity after eviction — rejecting new key",
+                    extra={"max_keys": self._max_keys, "active_keys": len(self._keys)},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="API key store at capacity. Try again later.",
+                )
+
+            raw_key = secrets.token_urlsafe(API_KEY_BYTE_LENGTH)
+            key_hash = _hash_key(raw_key)
+            now = time.time()
+            expires_at = now + ttl_seconds
+
+            self._keys[key_hash] = _StoredKey(
+                key_hash=key_hash,
+                claims=claims,
+                created_at=now,
+                expires_at=expires_at,
+                subject=subject,
             )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="API key store at capacity. Try again later.",
+            logger.info(
+                "API key issued",
+                extra={
+                    "subject": subject,
+                    "ttl_seconds": ttl_seconds,
+                    "expires_at": round(expires_at),
+                    "active_keys": len(self._keys),
+                },
             )
-
-        raw_key = secrets.token_urlsafe(API_KEY_BYTE_LENGTH)
-        key_hash = _hash_key(raw_key)
-        now = time.time()
-        expires_at = now + ttl_seconds
-
-        self._keys[key_hash] = _StoredKey(
-            key_hash=key_hash,
-            claims=claims,
-            created_at=now,
-            expires_at=expires_at,
-            subject=subject,
-        )
-        logger.info(
-            "API key issued",
-            extra={
-                "subject": subject,
-                "ttl_seconds": ttl_seconds,
-                "expires_at": round(expires_at),
-                "active_keys": len(self._keys),
-            },
-        )
-        return raw_key, expires_at
+            return raw_key, expires_at
 
     def validate(self, raw_key: str) -> tuple[dict[str, Any], float]:
         """Validate an API key.
@@ -144,65 +147,70 @@ class APIKeyStore:
         Raises ``HTTPException`` on invalid/expired key.
         """
         key_hash = _hash_key(raw_key)
-        stored = self._keys.get(key_hash)
+        with self._lock:
+            stored = self._keys.get(key_hash)
 
-        if stored is None:
-            logger.warning("API key validation failed: key not found")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key.",
-            )
+            if stored is None:
+                logger.warning("API key validation failed: key not found")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid API key.",
+                )
 
-        now = time.time()
-        remaining = stored.expires_at - now
-        if remaining <= 0:
-            del self._keys[key_hash]
-            logger.warning(
-                "API key expired",
-                extra={
-                    "subject": stored.subject,
-                    "expired_ago_seconds": round(-remaining),
-                },
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="API key has expired. Please exchange a new JWT for a fresh key.",
-                headers={"X-CertMesh-Key-Expired": "true"},
-            )
+            now = time.time()
+            remaining = stored.expires_at - now
+            if remaining <= 0:
+                del self._keys[key_hash]
+                logger.warning(
+                    "API key expired",
+                    extra={
+                        "subject": stored.subject,
+                        "expired_ago_seconds": round(-remaining),
+                    },
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="API key has expired. Please exchange a new JWT for a fresh key.",
+                    headers={"X-CertMesh-Key-Expired": "true"},
+                )
 
-        return stored.claims, remaining
+            return stored.claims, remaining
 
     def revoke(self, raw_key: str) -> bool:
         """Revoke a single API key. Returns True if found and revoked."""
         key_hash = _hash_key(raw_key)
-        if key_hash in self._keys:
-            subject = self._keys[key_hash].subject
-            del self._keys[key_hash]
-            logger.info("API key revoked", extra={"subject": subject})
-            return True
-        return False
+        with self._lock:
+            if key_hash in self._keys:
+                subject = self._keys[key_hash].subject
+                del self._keys[key_hash]
+                logger.info("API key revoked", extra={"subject": subject})
+                return True
+            return False
 
     def revoke_all_for_subject(self, subject: str) -> int:
         """Revoke all keys belonging to a subject. Returns count removed."""
-        to_remove = [h for h, s in self._keys.items() if s.subject == subject]
-        for h in to_remove:
-            del self._keys[h]
-        if to_remove:
-            logger.info(
-                "API keys revoked for subject",
-                extra={"subject": subject, "count": len(to_remove)},
-            )
-        return len(to_remove)
+        with self._lock:
+            to_remove = [h for h, s in self._keys.items() if s.subject == subject]
+            for h in to_remove:
+                del self._keys[h]
+            if to_remove:
+                logger.info(
+                    "API keys revoked for subject",
+                    extra={"subject": subject, "count": len(to_remove)},
+                )
+            return len(to_remove)
 
     def active_count(self) -> int:
         """Return number of active (non-expired) keys."""
-        self._evict_expired()
-        return len(self._keys)
+        with self._lock:
+            self._evict_expired()
+            return len(self._keys)
 
     def subject_key_count(self, subject: str) -> int:
         """Return number of active keys for a specific subject."""
-        self._evict_expired()
-        return sum(1 for s in self._keys.values() if s.subject == subject)
+        with self._lock:
+            self._evict_expired()
+            return sum(1 for s in self._keys.values() if s.subject == subject)
 
     # ── Internal eviction helpers ────────────────────────────────────────
 

@@ -477,15 +477,12 @@ def _validate_digicert(digicert: JsonDict) -> None:
     output = digicert.get("output", {})
     dest = output.get("destination", "filesystem")
     # Validate destination: accept both legacy strings and list format
-    destinations = normalize_destinations(dest) if isinstance(dest, list) else None
-    if destinations is None:
-        # Legacy string validation
-        if dest not in _OUTPUT_DESTINATIONS:
-            raise ConfigurationError(
-                f"digicert.output.destination '{dest}' is invalid. "
-                f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."
-            )
-        destinations = normalize_destinations(dest)
+    if not isinstance(dest, list) and dest not in _OUTPUT_DESTINATIONS:
+        raise ConfigurationError(
+            f"digicert.output.destination '{dest}' is invalid. "
+            f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."
+        )
+    destinations = normalize_destinations(dest)
     if "vault" in destinations and not output.get("vault_path_template"):
         raise ConfigurationError(
             "digicert output destination includes 'vault' but no vault_path_template is set."
@@ -517,11 +514,21 @@ def _validate_venafi(venafi: JsonDict) -> None:
             f"Supported: {sorted(_VENAFI_AUTH_METHODS)}."
         )
     # Validate destination: accept both legacy strings and list format
-    destinations = normalize_destinations(dest) if isinstance(dest, list) else None
-    if destinations is None and dest not in _OUTPUT_DESTINATIONS:
+    destinations = normalize_destinations(dest)
+    if not isinstance(dest, list) and dest not in _OUTPUT_DESTINATIONS:
         raise ConfigurationError(
             f"venafi.output.destination '{dest}' is invalid. "
             f"Supported: {sorted(_OUTPUT_DESTINATIONS)}."
+        )
+    # Validate required templates for vault/secrets_manager destinations
+    if "vault" in destinations and not output.get("vault_path_template"):
+        raise ConfigurationError(
+            "venafi output destination includes 'vault' but no vault_path_template is set."
+        )
+    if "secrets_manager" in destinations and not output.get("sm_secret_name_template"):
+        raise ConfigurationError(
+            "venafi output destination includes 'secrets_manager' but no "
+            "sm_secret_name_template is set."
         )
 
 

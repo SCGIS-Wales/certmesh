@@ -642,46 +642,51 @@ def list_issued_certificates(
         _raise_for_digicert_error(resp)
         return resp.json()
 
-    all_certs: list[IssuedCertificateSummary] = []
-    offset = 0
+    try:
+        all_certs: list[IssuedCertificateSummary] = []
+        offset = 0
 
-    for _ in range(max_pages):
-        try:
-            payload = _fetch_page(offset)
-        except RetryError as exc:
-            raise DigiCertAPIError(f"Failed to list certificates after retries: {exc}") from exc
+        for _ in range(max_pages):
+            try:
+                payload = _fetch_page(offset)
+            except RetryError as exc:
+                raise DigiCertAPIError(
+                    f"Failed to list certificates after retries: {exc}"
+                ) from exc
 
-        orders: list[JsonDict] = payload.get("orders", [])
-        for order in orders:
-            cert_data: JsonDict = order.get("certificate", {})
-            if not cert_data:
-                continue
-            cert_data.setdefault("order_id", order.get("id", 0))
-            cert_data.setdefault("product", order.get("product", {}))
-            all_certs.append(_cert_summary_from_dict(cert_data))
+            orders: list[JsonDict] = payload.get("orders", [])
+            for order in orders:
+                cert_data: JsonDict = order.get("certificate", {})
+                if not cert_data:
+                    continue
+                cert_data.setdefault("order_id", order.get("id", 0))
+                cert_data.setdefault("product", order.get("product", {}))
+                all_certs.append(_cert_summary_from_dict(cert_data))
 
-        # Pagination: check if there are more pages.
-        page_info: JsonDict = payload.get("page", {})
-        total: int = int(page_info.get("total", 0))
-        offset += page_size
-        if offset >= total:
-            break
+            # Pagination: check if there are more pages.
+            page_info: JsonDict = payload.get("page", {})
+            total: int = int(page_info.get("total", 0))
+            offset += page_size
+            if offset >= total:
+                break
 
-    logger.info("DigiCert: listed certificates.", extra={"count": len(all_certs)})
+        logger.info("DigiCert: listed certificates.", extra={"count": len(all_certs)})
 
-    # Client-side expiry filtering.
-    if expires_before or expires_after:
-        all_certs = _filter_by_expiry(
-            all_certs,
-            expires_before=expires_before,
-            expires_after=expires_after,
-        )
-        logger.debug(
-            "DigiCert: certificates after expiry filtering.",
-            extra={"count": len(all_certs)},
-        )
+        # Client-side expiry filtering.
+        if expires_before or expires_after:
+            all_certs = _filter_by_expiry(
+                all_certs,
+                expires_before=expires_before,
+                expires_after=expires_after,
+            )
+            logger.debug(
+                "DigiCert: certificates after expiry filtering.",
+                extra={"count": len(all_certs)},
+            )
 
-    return all_certs
+        return all_certs
+    finally:
+        session.close()
 
 
 # =============================================================================
@@ -754,47 +759,52 @@ def search_certificates(
         _raise_for_digicert_error(resp)
         return resp.json()
 
-    all_certs: list[IssuedCertificateSummary] = []
-    offset = 0
+    try:
+        all_certs: list[IssuedCertificateSummary] = []
+        offset = 0
 
-    for _ in range(max_pages):
-        try:
-            payload = _fetch_page(offset)
-        except RetryError as exc:
-            raise DigiCertAPIError(f"Failed to search certificates after retries: {exc}") from exc
+        for _ in range(max_pages):
+            try:
+                payload = _fetch_page(offset)
+            except RetryError as exc:
+                raise DigiCertAPIError(
+                    f"Failed to search certificates after retries: {exc}"
+                ) from exc
 
-        orders: list[JsonDict] = payload.get("orders", [])
-        for order in orders:
-            cert_data: JsonDict = order.get("certificate", {})
-            if not cert_data:
-                continue
-            cert_data.setdefault("order_id", order.get("id", 0))
-            cert_data.setdefault("product", order.get("product", {}))
-            all_certs.append(_cert_summary_from_dict(cert_data))
+            orders: list[JsonDict] = payload.get("orders", [])
+            for order in orders:
+                cert_data: JsonDict = order.get("certificate", {})
+                if not cert_data:
+                    continue
+                cert_data.setdefault("order_id", order.get("id", 0))
+                cert_data.setdefault("product", order.get("product", {}))
+                all_certs.append(_cert_summary_from_dict(cert_data))
 
-        page_info: JsonDict = payload.get("page", {})
-        total: int = int(page_info.get("total", 0))
-        offset += page_size
-        if offset >= total:
-            break
+            page_info: JsonDict = payload.get("page", {})
+            total: int = int(page_info.get("total", 0))
+            offset += page_size
+            if offset >= total:
+                break
 
-    # Client-side: product_name_id filter.
-    if product_name_id:
-        all_certs = [c for c in all_certs if product_name_id.lower() in c.product_name.lower()]
+        # Client-side: product_name_id filter.
+        if product_name_id:
+            all_certs = [c for c in all_certs if product_name_id.lower() in c.product_name.lower()]
 
-    # Client-side: expiry filter.
-    if expires_before or expires_after:
-        all_certs = _filter_by_expiry(
-            all_certs,
-            expires_before=expires_before,
-            expires_after=expires_after,
+        # Client-side: expiry filter.
+        if expires_before or expires_after:
+            all_certs = _filter_by_expiry(
+                all_certs,
+                expires_before=expires_before,
+                expires_after=expires_after,
+            )
+
+        logger.info(
+            "DigiCert: search returned certificates.",
+            extra={"count": len(all_certs), "common_name": common_name, "status": status},
         )
-
-    logger.info(
-        "DigiCert: search returned certificates.",
-        extra={"count": len(all_certs), "common_name": common_name, "status": status},
-    )
-    return all_certs
+        return all_certs
+    finally:
+        session.close()
 
 
 # =============================================================================
@@ -836,49 +846,52 @@ def describe_certificate(
         return resp.json()
 
     try:
-        data = _fetch()
-    except RetryError as exc:
-        raise DigiCertAPIError(
-            f"Failed to describe certificate {certificate_id} after retries: {exc}"
-        ) from exc
+        try:
+            data = _fetch()
+        except RetryError as exc:
+            raise DigiCertAPIError(
+                f"Failed to describe certificate {certificate_id} after retries: {exc}"
+            ) from exc
 
-    sans_list: list[str] = []
-    for san_entry in data.get("dns_names", []):
-        if isinstance(san_entry, str):
-            sans_list.append(san_entry)
-        elif isinstance(san_entry, dict):
-            sans_list.append(san_entry.get("name", ""))
+        sans_list: list[str] = []
+        for san_entry in data.get("dns_names", []):
+            if isinstance(san_entry, str):
+                sans_list.append(san_entry)
+            elif isinstance(san_entry, dict):
+                sans_list.append(san_entry.get("name", ""))
 
-    detail = DigiCertCertificateDetail(
-        certificate_id=int(data.get("id", certificate_id)),
-        order_id=int(data.get("order_id", 0)),
-        common_name=data.get("common_name", ""),
-        serial_number=data.get("serial_number", ""),
-        status=data.get("status", ""),
-        valid_from=data.get("valid_from", ""),
-        valid_till=data.get("valid_till", ""),
-        product_name=data.get("product", {}).get("name", "")
-        if isinstance(data.get("product"), dict)
-        else "",
-        sans=sans_list,
-        organization=data.get("organization", {}).get("name", "")
-        if isinstance(data.get("organization"), dict)
-        else "",
-        signature_hash=data.get("signature_hash", ""),
-        key_size=int(data.get("key_size", 0)),
-        thumbprint=data.get("thumbprint", ""),
-        raw=data,
-    )
+        detail = DigiCertCertificateDetail(
+            certificate_id=int(data.get("id", certificate_id)),
+            order_id=int(data.get("order_id", 0)),
+            common_name=data.get("common_name", ""),
+            serial_number=data.get("serial_number", ""),
+            status=data.get("status", ""),
+            valid_from=data.get("valid_from", ""),
+            valid_till=data.get("valid_till", ""),
+            product_name=data.get("product", {}).get("name", "")
+            if isinstance(data.get("product"), dict)
+            else "",
+            sans=sans_list,
+            organization=data.get("organization", {}).get("name", "")
+            if isinstance(data.get("organization"), dict)
+            else "",
+            signature_hash=data.get("signature_hash", ""),
+            key_size=int(data.get("key_size", 0)),
+            thumbprint=data.get("thumbprint", ""),
+            raw=data,
+        )
 
-    logger.info(
-        "DigiCert: described certificate.",
-        extra={
-            "certificate_id": certificate_id,
-            "common_name": detail.common_name,
-            "status": detail.status,
-        },
-    )
-    return detail
+        logger.info(
+            "DigiCert: described certificate.",
+            extra={
+                "certificate_id": certificate_id,
+                "common_name": detail.common_name,
+                "status": detail.status,
+            },
+        )
+        return detail
+    finally:
+        session.close()
 
 
 # =============================================================================
@@ -929,30 +942,33 @@ def download_issued_certificate(
         return resp.content
 
     try:
-        zip_bytes = _download()
-    except RetryError as exc:
-        raise DigiCertDownloadError(
-            f"Failed to download certificate {certificate_id} after retries: {exc}"
-        ) from exc
+        try:
+            zip_bytes = _download()
+        except RetryError as exc:
+            raise DigiCertDownloadError(
+                f"Failed to download certificate {certificate_id} after retries: {exc}"
+            ) from exc
 
-    cert_pem, chain_pem = _extract_pem_from_zip(zip_bytes)
+        cert_pem, chain_pem = _extract_pem_from_zip(zip_bytes)
 
-    bundle = cu.assemble_bundle(
-        cert_pem=cert_pem,
-        private_key_pem=private_key_pem.encode("utf-8"),
-        chain_pem=chain_pem,
-        source_id=str(certificate_id),
-    )
+        bundle = cu.assemble_bundle(
+            cert_pem=cert_pem,
+            private_key_pem=private_key_pem.encode("utf-8"),
+            chain_pem=chain_pem,
+            source_id=str(certificate_id),
+        )
 
-    logger.info(
-        "DigiCert: downloaded certificate.",
-        extra={
-            "certificate_id": certificate_id,
-            "common_name": bundle.common_name,
-            "serial": bundle.serial_number,
-        },
-    )
-    return bundle
+        logger.info(
+            "DigiCert: downloaded certificate.",
+            extra={
+                "certificate_id": certificate_id,
+                "common_name": bundle.common_name,
+                "serial": bundle.serial_number,
+            },
+        )
+        return bundle
+    finally:
+        session.close()
 
 
 # =============================================================================
@@ -1060,84 +1076,88 @@ def order_and_await_certificate(
         return resp.json()
 
     try:
-        order_resp = _submit_order()
-    except RetryError as exc:
-        raise DigiCertAPIError(f"Failed to submit certificate order after retries: {exc}") from exc
-
-    order_id: int = int(order_resp.get("id", 0))
-    if not order_id:
-        raise DigiCertAPIError(
-            "DigiCert order response did not contain an order ID.",
-            body=str(order_resp)[:200],
-        )
-
-    logger.info(
-        "DigiCert: submitted order.",
-        extra={
-            "order_id": order_id,
-            "common_name": order_request.common_name,
-            "product": order_request.product_name_id,
-        },
-    )
-
-    # ---- 3. Poll for issuance ----
-    polling_cfg: JsonDict = digicert_cfg.get("polling", {})
-    poll_interval: int = int(polling_cfg.get("interval_seconds", 15))
-    max_wait: int = int(polling_cfg.get("max_wait_seconds", 1800))
-    status_url = f"{base}/order/certificate/{order_id}"
-
-    @cb_dec
-    @retry_dec
-    def _check_order_status() -> JsonDict:
-        resp = session.get(status_url, timeout=_request_timeout(session))
-        _raise_for_digicert_error(resp)
-        return resp.json()
-
-    certificate_id: int | None = None
-    elapsed = 0
-
-    while elapsed < max_wait:
         try:
-            status_resp = _check_order_status()
+            order_resp = _submit_order()
         except RetryError as exc:
             raise DigiCertAPIError(
-                f"Failed to check order {order_id} status after retries: {exc}"
+                f"Failed to submit certificate order after retries: {exc}"
             ) from exc
 
-        order_status: str = status_resp.get("status", "")
-        cert_data: JsonDict = status_resp.get("certificate", {})
-
-        if order_status == "issued" and cert_data.get("id"):
-            certificate_id = int(cert_data["id"])
-            logger.info(
-                "DigiCert: order is issued.",
-                extra={"order_id": order_id, "certificate_id": certificate_id},
-            )
-            break
-
-        if order_status in ("rejected", "revoked", "canceled"):
+        order_id: int = int(order_resp.get("id", 0))
+        if not order_id:
             raise DigiCertAPIError(
-                f"DigiCert order {order_id} was {order_status}.",
-                body=str(status_resp)[:200],
+                "DigiCert order response did not contain an order ID.",
+                body=str(order_resp)[:200],
             )
 
-        logger.debug(
-            "DigiCert: order polling.",
+        logger.info(
+            "DigiCert: submitted order.",
             extra={
                 "order_id": order_id,
-                "status": order_status,
-                "interval_seconds": poll_interval,
-                "elapsed_seconds": elapsed,
-                "max_wait_seconds": max_wait,
+                "common_name": order_request.common_name,
+                "product": order_request.product_name_id,
             },
         )
-        time.sleep(poll_interval)
-        elapsed += poll_interval
 
-    if certificate_id is None:
-        raise DigiCertPollingTimeoutError(
-            f"Timed out after {max_wait}s waiting for DigiCert order {order_id} to be issued."
-        )
+        # ---- 3. Poll for issuance ----
+        polling_cfg: JsonDict = digicert_cfg.get("polling", {})
+        poll_interval: int = int(polling_cfg.get("interval_seconds", 15))
+        max_wait: int = int(polling_cfg.get("max_wait_seconds", 1800))
+        status_url = f"{base}/order/certificate/{order_id}"
+
+        @cb_dec
+        @retry_dec
+        def _check_order_status() -> JsonDict:
+            resp = session.get(status_url, timeout=_request_timeout(session))
+            _raise_for_digicert_error(resp)
+            return resp.json()
+
+        certificate_id: int | None = None
+        start = time.monotonic()
+
+        while (elapsed := time.monotonic() - start) < max_wait:
+            try:
+                status_resp = _check_order_status()
+            except RetryError as exc:
+                raise DigiCertAPIError(
+                    f"Failed to check order {order_id} status after retries: {exc}"
+                ) from exc
+
+            order_status: str = status_resp.get("status", "")
+            cert_data: JsonDict = status_resp.get("certificate", {})
+
+            if order_status == "issued" and cert_data.get("id"):
+                certificate_id = int(cert_data["id"])
+                logger.info(
+                    "DigiCert: order is issued.",
+                    extra={"order_id": order_id, "certificate_id": certificate_id},
+                )
+                break
+
+            if order_status in ("rejected", "revoked", "canceled"):
+                raise DigiCertAPIError(
+                    f"DigiCert order {order_id} was {order_status}.",
+                    body=str(status_resp)[:200],
+                )
+
+            logger.debug(
+                "DigiCert: order polling.",
+                extra={
+                    "order_id": order_id,
+                    "status": order_status,
+                    "interval_seconds": poll_interval,
+                    "elapsed_seconds": elapsed,
+                    "max_wait_seconds": max_wait,
+                },
+            )
+            time.sleep(poll_interval)
+
+        if certificate_id is None:
+            raise DigiCertPollingTimeoutError(
+                f"Timed out after {max_wait}s waiting for DigiCert order {order_id} to be issued."
+            )
+    finally:
+        session.close()
 
     # ---- 4. Download ----
     bundle = download_issued_certificate(
@@ -1210,53 +1230,56 @@ def revoke_certificate(
     session = _build_session(digicert_cfg, vault_cfg, vault_cl)
     base = _base_url(digicert_cfg)
 
-    # Resolve certificate_id from order if needed.
-    if certificate_id is None:
-        certificate_id = _resolve_certificate_id_from_order(
-            session,
-            base,
-            order_id,
-            digicert_cfg,  # type: ignore[arg-type]
-        )
-
-    url = f"{base}/certificate/{certificate_id}/revoke"
-
-    # Build revocation body per CertCentral API v2 spec.
-    # Ref: PUT /certificate/{id}/revoke
-    # Field name is ``revocation_reason`` (not ``reason``).
-    # ``skip_approval`` bypasses admin approval for automated workflows.
-    revoke_body: JsonDict = {
-        "revocation_reason": reason,
-        "skip_approval": True,
-    }
-    if comments:
-        revoke_body["comments"] = comments
-
-    retry_dec = _make_retry_decorator(digicert_cfg)
-    cb_dec = _make_circuit_breaker(digicert_cfg, "digicert-revoke-cert")
-
-    @cb_dec
-    @retry_dec
-    def _revoke() -> JsonDict:
-        resp = session.put(url, json=revoke_body, timeout=_request_timeout(session))
-        _raise_for_digicert_error(resp)
-        # DigiCert returns 204 No Content on successful revocation.
-        if resp.status_code == 204 or not resp.content:
-            return {"status": "revoked", "certificate_id": certificate_id}
-        return resp.json()
-
     try:
-        result = _revoke()
-    except RetryError as exc:
-        raise DigiCertAPIError(
-            f"Failed to revoke certificate {certificate_id} after retries: {exc}"
-        ) from exc
+        # Resolve certificate_id from order if needed.
+        if certificate_id is None:
+            certificate_id = _resolve_certificate_id_from_order(
+                session,
+                base,
+                order_id,
+                digicert_cfg,  # type: ignore[arg-type]
+            )
 
-    logger.info(
-        "DigiCert: revoked certificate.",
-        extra={"certificate_id": certificate_id, "reason": reason},
-    )
-    return result
+        url = f"{base}/certificate/{certificate_id}/revoke"
+
+        # Build revocation body per CertCentral API v2 spec.
+        # Ref: PUT /certificate/{id}/revoke
+        # Field name is ``revocation_reason`` (not ``reason``).
+        # ``skip_approval`` bypasses admin approval for automated workflows.
+        revoke_body: JsonDict = {
+            "revocation_reason": reason,
+            "skip_approval": True,
+        }
+        if comments:
+            revoke_body["comments"] = comments
+
+        retry_dec = _make_retry_decorator(digicert_cfg)
+        cb_dec = _make_circuit_breaker(digicert_cfg, "digicert-revoke-cert")
+
+        @cb_dec
+        @retry_dec
+        def _revoke() -> JsonDict:
+            resp = session.put(url, json=revoke_body, timeout=_request_timeout(session))
+            _raise_for_digicert_error(resp)
+            # DigiCert returns 204 No Content on successful revocation.
+            if resp.status_code == 204 or not resp.content:
+                return {"status": "revoked", "certificate_id": certificate_id}
+            return resp.json()
+
+        try:
+            result = _revoke()
+        except RetryError as exc:
+            raise DigiCertAPIError(
+                f"Failed to revoke certificate {certificate_id} after retries: {exc}"
+            ) from exc
+
+        logger.info(
+            "DigiCert: revoked certificate.",
+            extra={"certificate_id": certificate_id, "reason": reason},
+        )
+        return result
+    finally:
+        session.close()
 
 
 def _resolve_certificate_id_from_order(
@@ -1368,14 +1391,17 @@ def duplicate_certificate(
         return resp.json()
 
     try:
-        result = _submit_duplicate()
-    except RetryError as exc:
-        raise DigiCertAPIError(
-            f"Failed to submit duplicate for order {order_id} after retries: {exc}"
-        ) from exc
+        try:
+            result = _submit_duplicate()
+        except RetryError as exc:
+            raise DigiCertAPIError(
+                f"Failed to submit duplicate for order {order_id} after retries: {exc}"
+            ) from exc
 
-    logger.info(
-        "DigiCert: submitted duplicate request for order.",
-        extra={"order_id": order_id, "common_name": common_name or "(original)"},
-    )
-    return result
+        logger.info(
+            "DigiCert: submitted duplicate request for order.",
+            extra={"order_id": order_id, "common_name": common_name or "(original)"},
+        )
+        return result
+    finally:
+        session.close()

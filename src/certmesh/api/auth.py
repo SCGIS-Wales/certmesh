@@ -116,9 +116,23 @@ def _fetch_jwks(jwks_uri: str, *, force: bool = False) -> dict[str, Any]:
 
 
 def _extract_jwk(jwks: dict[str, Any], kid: str | None) -> dict[str, str]:
-    """Find a JWK matching the given ``kid`` from a JWKS key set."""
+    """Find a JWK matching the given ``kid`` from a JWKS key set.
+
+    SEC-14: Only accept keys whose ``alg`` field is absent (algorithm negotiated
+    at decode time and enforced by PyJWT) or explicitly set to ``RS256``.  Keys
+    advertising any other algorithm (e.g. ``"none"``, ``"HS256"``) are skipped
+    to prevent algorithm-confusion attacks.
+    """
     for key in jwks.get("keys", []):
         if key.get("kid") != kid:
+            continue
+        # SEC-14: Reject keys that explicitly declare a non-RS256 algorithm.
+        key_alg = key.get("alg")
+        if key_alg is not None and key_alg != "RS256":
+            logger.warning(
+                "JWKS key skipped: algorithm not RS256",
+                extra={"kid": kid, "alg": key_alg},
+            )
             continue
         result: dict[str, str] = {
             "kty": key["kty"],

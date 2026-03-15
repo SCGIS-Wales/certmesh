@@ -8,6 +8,7 @@ Health check endpoints: /healthz, /readyz, /livez
 from __future__ import annotations
 
 import logging
+import threading
 import time
 
 from fastapi import APIRouter, Request
@@ -62,6 +63,7 @@ async def readiness(request: Request) -> ReadinessResponse:
 
 
 # REL-02: Cache STS result to avoid calling get_caller_identity() on every probe
+_sts_lock = threading.Lock()
 _sts_cache_result: str = ""
 _sts_cache_time: float = 0.0
 _STS_CACHE_TTL: float = 60.0  # 1 minute
@@ -72,17 +74,26 @@ def _get_cached_aws_status() -> str:
     global _sts_cache_result, _sts_cache_time
 
     now = time.monotonic()
+
+    # Fast path: read cache without lock if still valid
     if _sts_cache_result and (now - _sts_cache_time) < _STS_CACHE_TTL:
         return _sts_cache_result
 
-    try:
-        import boto3
+    with _sts_lock:
+        # Re-check under lock (another thread may have already refreshed)
+        now = time.monotonic()
+        if _sts_cache_result and (now - _sts_cache_time) < _STS_CACHE_TTL:
+            return _sts_cache_result
 
-        sts = boto3.client("sts")
-        sts.get_caller_identity()
-        _sts_cache_result = "ok"
-    except Exception:
-        _sts_cache_result = "unavailable"
+        try:
+            import boto3
 
-    _sts_cache_time = now
+            sts = boto3.client("sts")
+            sts.get_caller_identity()
+            _sts_cache_result = "ok"
+        except Exception:
+            _sts_cache_result = "unavailable"
+
+        _sts_cache_time = now
+
     return _sts_cache_result

@@ -746,10 +746,12 @@ class TestWaitForIssuance:
         mock_sleep.assert_not_called()
 
     @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.time.monotonic")
     @patch("certmesh.providers.acm_client.describe_certificate")
     def test_polls_until_issued(
         self,
         mock_describe: MagicMock,
+        mock_monotonic: MagicMock,
         mock_sleep: MagicMock,
         acm_cfg: JsonDict,
     ) -> None:
@@ -764,13 +766,13 @@ class TestWaitForIssuance:
             status="ISSUED",
         )
         mock_describe.side_effect = [pending_detail, pending_detail, issued_detail]
+        # deadline = 0 + 5 = 5; remaining checks stay positive until issued
+        mock_monotonic.side_effect = [0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0]
 
         detail = wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
         assert detail.status == "ISSUED"
         assert mock_sleep.call_count == 2
-        # Check interval from config (polling.interval_seconds = 1)
-        mock_sleep.assert_called_with(1)
 
     @patch("certmesh.providers.acm_client.time.sleep")
     @patch("certmesh.providers.acm_client.describe_certificate")
@@ -808,32 +810,36 @@ class TestWaitForIssuance:
             wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
     @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.time.monotonic")
     @patch("certmesh.providers.acm_client.describe_certificate")
     def test_timeout_raises(
         self,
         mock_describe: MagicMock,
+        mock_monotonic: MagicMock,
         mock_sleep: MagicMock,
         acm_cfg: JsonDict,
     ) -> None:
         # Config has max_wait_seconds=5, interval_seconds=1.
-        # After 5 iterations of sleep(1), elapsed reaches 5 and we exit the
-        # while loop. describe is then called once more in the exception message.
+        # Simulate monotonic clock advancing past deadline.
         pending = ACMCertificateDetail(
             certificate_arn=_SAMPLE_CERT_ARN,
             domain_name=_SAMPLE_DOMAIN,
             status="PENDING_VALIDATION",
         )
-        # 5 calls inside the loop + 1 call in the timeout exception message
-        mock_describe.side_effect = [pending] * 6
+        mock_describe.return_value = pending
+        # First call sets deadline (100+5=105), then each iteration checks remaining
+        mock_monotonic.side_effect = [100.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0]
 
         with pytest.raises(ACMValidationError, match="Timed out after 5s"):
             wait_for_issuance(acm_cfg, _SAMPLE_CERT_ARN)
 
     @patch("certmesh.providers.acm_client.time.sleep")
+    @patch("certmesh.providers.acm_client.time.monotonic")
     @patch("certmesh.providers.acm_client.describe_certificate")
     def test_override_interval_and_max_wait(
         self,
         mock_describe: MagicMock,
+        mock_monotonic: MagicMock,
         mock_sleep: MagicMock,
         acm_cfg: JsonDict,
     ) -> None:
@@ -848,6 +854,8 @@ class TestWaitForIssuance:
             status="ISSUED",
         )
         mock_describe.side_effect = [pending, issued]
+        # deadline = 0 + 60 = 60; remaining = 60 - 1 = 59 > 0; sleep(min(2, 59))
+        mock_monotonic.side_effect = [0.0, 0.0, 1.0, 2.0, 2.0]
 
         detail = wait_for_issuance(
             acm_cfg,

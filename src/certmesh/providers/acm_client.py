@@ -60,6 +60,7 @@ Private CA certificates have always been exportable.
 
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from dataclasses import dataclass, field
@@ -199,22 +200,39 @@ def _boto_error_message(exc: botocore.exceptions.ClientError) -> str:
 # =============================================================================
 
 
-def _build_acm_client(acm_cfg: JsonDict) -> Any:
-    """Create a boto3 ACM client from configuration."""
+@functools.lru_cache(maxsize=16)
+def _cached_acm_client(region: str | None) -> Any:
+    """Return a cached boto3 ACM client for *region*.
+
+    boto3 clients are thread-safe; creating one per region once and
+    reusing it avoids the overhead of repeated credential lookups and
+    connection setup (Issue #22).
+    """
     kwargs: dict[str, Any] = {}
-    region = acm_cfg.get("region")
     if region:
         kwargs["region_name"] = region
     return boto3.client("acm", **kwargs)
 
 
-def _build_acm_pca_client(acm_cfg: JsonDict) -> Any:
-    """Create a boto3 ACM-PCA client from configuration."""
+@functools.lru_cache(maxsize=16)
+def _cached_acm_pca_client(region: str | None) -> Any:
+    """Return a cached boto3 ACM-PCA client for *region* (Issue #22)."""
     kwargs: dict[str, Any] = {}
-    region = acm_cfg.get("region")
     if region:
         kwargs["region_name"] = region
     return boto3.client("acm-pca", **kwargs)
+
+
+def _build_acm_client(acm_cfg: JsonDict) -> Any:
+    """Return a boto3 ACM client, reusing a cached instance per region."""
+    region: str | None = acm_cfg.get("region") or None
+    return _cached_acm_client(region)
+
+
+def _build_acm_pca_client(acm_cfg: JsonDict) -> Any:
+    """Return a boto3 ACM-PCA client, reusing a cached instance per region."""
+    region: str | None = acm_cfg.get("region") or None
+    return _cached_acm_pca_client(region)
 
 
 # =============================================================================
@@ -704,16 +722,17 @@ def wait_for_issuance(
         extra={"short_id": short_id, "interval_seconds": interval, "timeout_seconds": max_wait},
     )
 
-    elapsed = 0
+    deadline = time.monotonic() + max_wait
     last_status = "UNKNOWN"
-    while elapsed < max_wait:
+    while True:
+        elapsed = max_wait - (deadline - time.monotonic())
         detail = describe_certificate(acm_cfg, certificate_arn)
         last_status = detail.status
 
         if last_status == "ISSUED":
             logger.info(
                 "ACM: certificate is now ISSUED.",
-                extra={"short_id": short_id, "elapsed_seconds": elapsed},
+                extra={"short_id": short_id, "elapsed_seconds": round(elapsed, 1)},
             )
             return detail
 
@@ -721,8 +740,12 @@ def wait_for_issuance(
             reason = detail.failure_reason or "no failure reason provided"
             raise ACMValidationError(
                 f"Certificate '{certificate_arn}' reached terminal status "
-                f"'{last_status}' after {elapsed}s: {reason}."
+                f"'{last_status}' after {elapsed:.1f}s: {reason}."
             )
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
 
         logger.debug(
             "ACM: certificate polling.",
@@ -730,12 +753,11 @@ def wait_for_issuance(
                 "short_id": short_id,
                 "status": last_status,
                 "interval_seconds": interval,
-                "elapsed_seconds": elapsed,
+                "elapsed_seconds": round(elapsed, 1),
                 "max_wait_seconds": max_wait,
             },
         )
-        time.sleep(interval)
-        elapsed += interval
+        time.sleep(min(interval, remaining))
 
     raise ACMValidationError(
         f"Timed out after {max_wait}s waiting for certificate "
