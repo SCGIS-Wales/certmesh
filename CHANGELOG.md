@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 
+
+## [3.0.14] - 2026-03-15
+
+### Changed
+- Fix 4 ruff SIM114 violations — combine duplicate `if` branches returning the same value in `update_changelog.py` ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Simplify changelog category mapping: redundant `elif` chains collapsed to single `else` ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Update README to reflect current state: ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Test count 790+ → 800+ (809 tests) ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Add renewal engine, rate limiting, API key exchange, GZip compression features ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Add Helm `values.schema.json` input validation ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+- Add `renewal.py`, `apikeys.py`, `rate_limiter.py`, `compression.py` to architecture section ([#15](https://github.com/SCGIS-Wales/certmesh/pull/15))
+
 ## [3.0.13] - 2026-03-15
 
 ### Fixed
@@ -112,7 +124,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.13...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.14...HEAD
+[3.0.14]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.13...v3.0.14
 [3.0.13]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.9...v3.0.13
 [3.0.9]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...v3.0.9
 [3.0.8]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...v3.0.8
