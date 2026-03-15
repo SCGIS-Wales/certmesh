@@ -81,10 +81,7 @@ class TestSummaryToChangelogEntries:
         assert "should be skipped" not in result
 
     def test_skips_generated_with(self):
-        summary = (
-            "- Real entry\n"
-            "- Generated with [Claude Code](https://claude.com/claude-code)"
-        )
+        summary = "- Real entry\n- Generated with [Claude Code](https://claude.com/claude-code)"
         result = uc.summary_to_changelog_entries(summary, 7, "Added")
         assert "Real entry" in result
         assert "Generated with" not in result
@@ -106,9 +103,7 @@ class TestSummaryToChangelogEntries:
         assert "Fixed bug B" in result
 
     def test_strips_github_pr_links(self):
-        summary = (
-            "- Some fix by @user in https://github.com/SCGIS-Wales/certmesh/pull/42"
-        )
+        summary = "- Some fix by @user in https://github.com/SCGIS-Wales/certmesh/pull/42"
         result = uc.summary_to_changelog_entries(summary, 42, "Fixed")
         assert "Some fix by @user" in result
 
@@ -159,7 +154,9 @@ class TestUpdateChangelog:
             lambda p: str(tmp_path) if p == uc.__file__ else os.path.dirname(p),
         )
 
-        content = "### Added\n- New feature ([#4](https://github.com/SCGIS-Wales/certmesh/pull/4))\n"
+        content = (
+            "### Added\n- New feature ([#4](https://github.com/SCGIS-Wales/certmesh/pull/4))\n"
+        )
         uc.update_changelog("3.0.1", "2026-03-14", content, 4)
 
         result = changelog.read_text()
@@ -213,14 +210,7 @@ class TestGetPrSummary:
     """Test PR summary extraction (regex logic only)."""
 
     def test_extracts_summary_section(self):
-        body = (
-            "## Summary\n"
-            "- Fixed a bug\n"
-            "- Added a feature\n"
-            "\n"
-            "## Test plan\n"
-            "- [x] Tests pass\n"
-        )
+        body = "## Summary\n- Fixed a bug\n- Added a feature\n\n## Test plan\n- [x] Tests pass\n"
         match = re.search(r"## Summary\s*\n(.*?)(?=\n## |\Z)", body, re.DOTALL)
         assert match is not None
         summary = match.group(1).strip()

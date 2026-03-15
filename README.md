@@ -13,12 +13,13 @@ A unified CLI and Python API for managing certificates across **DigiCert CertCen
 
 - **Multi-provider** -- single tool for DigiCert, Venafi TPP, Vault PKI, AWS ACM/ACM-PCA, and Let's Encrypt
 - **Full lifecycle** -- request, list, search, describe, download, renew, revoke, and export certificates
-- **REST API** -- production-grade FastAPI service with OAuth2 (ADFS / Azure Entra ID), Prometheus metrics, and full CRUD endpoints for all providers
+- **REST API** -- production-grade FastAPI service with OAuth2 (ADFS / Azure Entra ID), API key exchange, rate limiting, GZip compression, Prometheus metrics, and full CRUD endpoints for all providers
 - **Spec-compliant** -- all provider API calls validated against official API reference documentation (DigiCert CertCentral v2, Venafi TPP v23/v25.3, AWS ACM)
 - **Credential security** -- secrets come from Vault (KV v1/v2) or environment variables, never from config files
-- **Resilient** -- circuit breakers, exponential-backoff retry, and configurable timeouts on all HTTP calls
+- **Resilient** -- circuit breakers with TOCTOU-safe HALF_OPEN probing, exponential-backoff retry, monotonic-clock polling, and configurable timeouts on all HTTP calls
+- **Automatic renewal** -- scheduled certificate renewal engine with configurable policy (before-expiry threshold, per-provider dispatch)
 - **Configurable** -- layered config: built-in defaults < YAML file < `CM_*` environment variables
-- **Cloud-native** -- Docker image, Helm chart for EKS with IRSA, NLB, HPA, and Vault PKI TLS
+- **Cloud-native** -- Docker image, Helm chart for EKS with IRSA, NLB, HPA, Vault PKI TLS, and JSON Schema input validation
 - **Typed** -- fully typed with `py.typed` marker; dataclass models for all API responses
 
 ## Installation
@@ -222,6 +223,7 @@ certmesh/
   credentials.py        -- Env-first, Vault-fallback secret resolution
   certificate_utils.py  -- Key gen, CSR, PKCS#12, bundle assembly, persistence
   circuit_breaker.py    -- Thread-safe CLOSED/OPEN/HALF_OPEN state machine
+  renewal.py            -- Automatic certificate renewal engine
   exceptions.py         -- Full exception hierarchy
   providers/
     digicert_client.py  -- DigiCert CertCentral API v2 (spec-validated)
@@ -234,7 +236,10 @@ certmesh/
     route53_client.py   -- Route53 DNS record management
   api/
     app.py              -- FastAPI application factory
-    auth.py             -- OAuth2 JWT Bearer validation
+    auth.py             -- OAuth2 JWT Bearer validation (RS256 algorithm restriction)
+    apikeys.py          -- Thread-safe API key exchange store
+    rate_limiter.py     -- Configurable rate limiting (SlowAPI, RFC 7231)
+    compression.py      -- GZip compression middleware
     routes/             -- REST API endpoints
     metrics.py          -- Prometheus metrics
 ```
@@ -284,7 +289,7 @@ helm install certmesh helm/certmesh \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/certmesh
 ```
 
-See [`helm/certmesh/values.yaml`](helm/certmesh/values.yaml) for all configuration options.
+See [`helm/certmesh/values.yaml`](helm/certmesh/values.yaml) for all configuration options. Helm values are validated at install time via [`values.schema.json`](helm/certmesh/values.schema.json).
 
 ### AWS IAM Permissions
 
@@ -378,7 +383,7 @@ When running on AWS (EKS with IRSA, EC2, or Lambda), the IAM role needs the foll
 
 ### Test Suite
 
-- **790+ tests** across the test suite (including provider route handler tests)
+- **800+ tests** across the test suite (including provider route handler tests)
 - **87%+ coverage** (80% minimum enforced in CI)
 - Tests use `pytest`, `pytest-mock`, `responses`, `moto`, and `freezegun`
 

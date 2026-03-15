@@ -55,9 +55,7 @@ def find_pr_for_tag(tag: str, repo: str) -> int | None:
     find the squash-merge commit, and extract the PR number from its
     message (GitHub appends ' (#N)' to squash merge titles).
     """
-    tags_raw = run(
-        ["git", "tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname"]
-    )
+    tags_raw = run(["git", "tag", "--list", "v[0-9]*.[0-9]*.[0-9]*", "--sort=-v:refname"])
     tags = tags_raw.split("\n")
 
     tag_index = tags.index(tag) if tag in tags else -1
@@ -124,14 +122,6 @@ def classify_pr(title: str) -> str:
         return "Added"
     elif title_lower.startswith("fix"):
         return "Fixed"
-    elif title_lower.startswith("docs"):
-        return "Changed"
-    elif title_lower.startswith("chore") or title_lower.startswith("style"):
-        return "Changed"
-    elif title_lower.startswith("refactor"):
-        return "Changed"
-    elif title_lower.startswith("perf"):
-        return "Changed"
     else:
         return "Changed"
 
@@ -157,13 +147,9 @@ def summary_to_changelog_entries(summary: str, pr_number: int, category: str) ->
             continue
         if line.startswith("#") or line.startswith("|"):
             continue
-        if line.startswith("![") or (
-            line.startswith("[") and "](" in line and line.endswith(")")
-        ):
+        if line.startswith("![") or (line.startswith("[") and "](" in line and line.endswith(")")):
             continue
-        if line.startswith("- "):
-            entry = line[2:].strip()
-        elif line.startswith("* "):
+        if line.startswith("- ") or line.startswith("* "):
             entry = line[2:].strip()
         else:
             if len(line) > 10 and not line.startswith("###"):
