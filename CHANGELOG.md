@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [3.0.13] - 2026-03-15
+
+### Fixed
+- Comprehensive pass addressing 27 issues across security, reliability, and code quality — organized by severity from the code review findings. ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Circuit breaker TOCTOU race** — Added `probe_in_flight` flag to enforce single-probe semantics in HALF_OPEN state ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Renewal engine dead code** — Replaced stub `_check_provider()` with working ACM dispatch and full `_check_acm()` implementation ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **DigiCert session leak** — All 7 public functions wrapped with `try/finally session.close()` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Venafi session leak on auth failure** — Close session in except block before re-raising ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **APIKeyStore thread safety** — Added `threading.Lock` with guarded access on all 6 public methods ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **STS health cache race** — Double-check locking pattern with module-level `threading.Lock` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Venafi missing retry type** — Added `requests.exceptions.HTTPError` to retryable exceptions ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **DigiCert polling drift** — `order_and_await_certificate` uses `time.monotonic()` deadline ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Venafi polling drift** — `_poll_certificate_ready` uses monotonic deadline ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **ACM polling drift** — `wait_for_issuance` uses monotonic deadline ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Chain PEM file permissions** — `os.open()` with `0o600` instead of `write_text()` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **CORS wildcards** — Restricted to specific methods and headers via env vars ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **JWKS algorithm restriction** — Skip keys with `alg` != RS256 ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Route53 misleading region param** — Removed from `delete_validation_records()` (global service) ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Let's Encrypt RSA key size** — 2048 → 4096 ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Helm input validation** — Created `values.schema.json` with type constraints, enums, regex patterns, min/max ranges ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Venafi parse deduplication** — Extracted `_parse_certificate_summary()` helper ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Settings venafi validation** — Added vault_path_template and sm_secret_name_template checks ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Settings digicert double-normalize** — Removed redundant `normalize_destinations()` call ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **boto3 client caching** — `@functools.lru_cache(maxsize=16)` for ACM/PCA clients ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **CertificateBundle immutability** — `@dataclass(slots=True, frozen=True)` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **Renewal "week" unit** — Added to `_UNIT_SECONDS` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- **config_loader deprecation warning** — `warnings.warn()` with `DeprecationWarning` ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+- Updated ACM tests to mock `time.monotonic` for deadline-based polling ([#14](https://github.com/SCGIS-Wales/certmesh/pull/14))
+
 ### Changed
 - **README**: Add full REST API endpoint reference (DigiCert, Venafi, ACM, Vault PKI, Auth); update architecture section with spec-validated providers; add "Spec-compliant" feature bullet; update test count to 790+; update CI table with integration tests
 
@@ -82,7 +112,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.9...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.13...HEAD
+[3.0.13]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.9...v3.0.13
 [3.0.9]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...v3.0.9
 [3.0.8]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.7...v3.0.8
 [3.0.7]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.6...v3.0.7
