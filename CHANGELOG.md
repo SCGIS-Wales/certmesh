@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+
+## [3.0.15] - 2026-03-15
+
+### Fixed
+- Comprehensive security and reliability audit addressing 11 issues found across the API layer, providers, backends, Helm chart, and CI pipeline. ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **X-Request-ID log injection** — Sanitize incoming header against `^[a-zA-Z0-9\-_.]{1,128}$` regex; generate fresh UUID if invalid ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **JWT error detail leakage** — Replace raw PyJWT exception messages and key IDs in HTTP 401 responses with generic messages (details remain in server logs) ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **Vault secret field enumeration** — Remove `Available fields: [...]` from error messages returned to clients; log at debug level only ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **Cert PEM file permissions** — Write certificate PEM via `os.open()` with explicit `0o644` mode instead of `Path.write_text()` (which inherits umask) ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **Vault PKI schema validation** — Add Pydantic `Field` constraints: `common_name` max 253 chars, TTL format pattern, serial_number bounds, alt_names/ip_sans list limits ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **NetworkPolicy open ingress** — Default config now restricts ingress to same-namespace pods via `podSelector: {}` instead of allowing all sources when no CIDRs configured ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **Init script private key on disk** — Write Vault TLS response to memory-backed volume (`${TLS_DIR}/.response.json`) instead of disk-backed `/tmp` ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **Venafi session leaks** — All 5 route handlers now use `try/finally: session.close()` to prevent connection pool exhaustion ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **LocalStack CI pinning** — Pin from `:latest` to `:3.8` for reproducible integration tests ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **kind node image** — Fix from nonexistent `v1.34.3` to `v1.33.0` ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **CLI `--config` validation** — Now uses `click.Path(exists=True)` consistent with `--env-file` ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+- **CliRunner stderr** — Add `mix_stderr=False` to fix `result.stderr` access in Click test runner ([#16](https://github.com/SCGIS-Wales/certmesh/pull/16))
+
 ## [3.0.14] - 2026-03-15
 
 ### Changed
@@ -124,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RSA_1024 removed from valid key algorithms
 - Request timeouts enforced on all HTTP calls
 
-[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.14...HEAD
+[Unreleased]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.15...HEAD
+[3.0.15]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.14...v3.0.15
 [3.0.14]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.13...v3.0.14
 [3.0.13]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.9...v3.0.13
 [3.0.9]: https://github.com/SCGIS-Wales/certmesh/compare/v3.0.8...v3.0.9
