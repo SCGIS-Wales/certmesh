@@ -100,7 +100,7 @@ JsonDict = dict[str, Any]
 @click.option(
     "--config",
     "config_file",
-    type=click.Path(exists=False),
+    type=click.Path(exists=True),
     default=None,
     help="Path to YAML config file.",
 )
@@ -942,13 +942,19 @@ def acm_export(
             sid = acm_client.arn_short_id(arn)
             import os
 
-            (out / f"{sid}_cert.pem").write_text(bundle.certificate_pem)
+            cert_path = out / f"{sid}_cert.pem"
+            cert_fd = os.open(cert_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+            with os.fdopen(cert_fd, "w") as cf:
+                cf.write(bundle.certificate_pem)
             key_path = out / f"{sid}_key.pem"
             fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w") as kf:
                 kf.write(bundle.private_key_pem)
             if bundle.chain_pem:
-                (out / f"{sid}_chain.pem").write_text(bundle.chain_pem)
+                chain_path = out / f"{sid}_chain.pem"
+                chain_fd = os.open(chain_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+                with os.fdopen(chain_fd, "w") as chf:
+                    chf.write(bundle.chain_pem)
             click.echo(f"Exported to {out}/")
         else:
             click.echo(f"Exported: CN={bundle.common_name}, serial={bundle.serial_number}")

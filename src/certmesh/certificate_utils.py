@@ -296,9 +296,11 @@ def _write_to_filesystem(
             order_id=sid, guid=sid, cert_arn_short=sid
         )
 
-        cert_path.write_text(bundle.certificate_pem, encoding="utf-8")
+        cert_fd = os.open(cert_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+        with os.fdopen(cert_fd, "w", encoding="utf-8") as cf:
+            cf.write(bundle.certificate_pem)
         written_files.append(cert_path)
-        logger.info("Wrote certificate PEM", extra={"path": str(cert_path)})
+        logger.info("Wrote certificate PEM", extra={"path": str(cert_path), "mode": "0644"})
 
         fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as kf:

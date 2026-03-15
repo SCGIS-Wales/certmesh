@@ -182,7 +182,7 @@ def _decode_jwt(token: str, rsa_key: dict[str, str], config: OAuth2Config) -> di
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token validation failed: {exc}",
+            detail="Token validation failed.",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
 
@@ -209,7 +209,7 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token header: {exc}",
+            detail="Invalid token header.",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
 
@@ -233,7 +233,7 @@ def _validate_token(token: str, config: OAuth2Config) -> dict[str, Any]:
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"No matching key found for kid={kid}",
+            detail="No matching key found. The signing key may have rotated.",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         )
 

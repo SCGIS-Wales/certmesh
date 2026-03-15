@@ -14,14 +14,16 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Allow same-namespace traffic on application ports
+    # Allow same-namespace traffic on application ports (default),
+    # plus any explicitly allowed CIDRs or namespaces.
     - ports:
         {{- range .Values.networkPolicy.ingressPorts }}
         - port: {{ .port }}
           protocol: {{ .protocol | default "TCP" }}
         {{- end }}
-      {{- if or .Values.networkPolicy.ingressCIDRs .Values.networkPolicy.allowedNamespaces }}
       from:
+        # Always allow same-namespace pods
+        - podSelector: {}
         {{- range .Values.networkPolicy.ingressCIDRs }}
         - ipBlock:
             cidr: {{ . }}
@@ -31,7 +33,6 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: {{ . }}
         {{- end }}
-      {{- end }}
   egress:
     # DNS resolution (kube-dns / CoreDNS)
     - ports:
