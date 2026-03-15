@@ -261,10 +261,11 @@ def read_secret_field(client: hvac.Client, path: str, field: str) -> str:
     """Read a single field from a Vault KV v2 secret."""
     data = read_all_secret_fields(client, path)
     if field not in data:
-        raise VaultSecretNotFoundError(
-            f"Field '{field}' not found in Vault secret at '{path}'. "
-            f"Available fields: {sorted(data.keys())}"
+        logger.debug(
+            "Field not found in Vault secret",
+            extra={"path": path, "field": field, "available": sorted(data.keys())},
         )
+        raise VaultSecretNotFoundError(f"Field '{field}' not found in Vault secret at '{path}'.")
     return data[field]
 
 
@@ -352,9 +353,12 @@ def read_secret_field_v1(client: hvac.Client, path: str, field: str) -> str:
     """Read a single field from a Vault KV v1 secret."""
     data = read_all_secret_fields_v1(client, path)
     if field not in data:
+        logger.debug(
+            "Field not found in Vault secret (KV v1)",
+            extra={"path": path, "field": field, "available": sorted(data.keys())},
+        )
         raise VaultSecretNotFoundError(
-            f"Field '{field}' not found in Vault secret at '{path}' (KV v1). "
-            f"Available fields: {sorted(data.keys())}"
+            f"Field '{field}' not found in Vault secret at '{path}' (KV v1)."
         )
     return data[field]
 

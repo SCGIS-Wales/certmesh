@@ -49,11 +49,6 @@ spec:
         - name: vault-tls-init
           image: {{ .Values.vaultPkiTls.vaultImage | default "hashicorp/vault:1.21" }}
           command: ["sh", "/scripts/vault-tls-init.sh"]
-          # K8s >= 1.34: per-container restart policy (ContainerRestartRules).
-          # Never = if TLS init fails, the pod fails immediately instead of
-          # retrying endlessly. This surfaces Vault auth / PKI config errors
-          # quickly and avoids CrashLoopBackOff on a doomed init container.
-          restartPolicy: Never
           env:
             - name: VAULT_ADDR
               value: {{ .Values.vault.url | quote }}

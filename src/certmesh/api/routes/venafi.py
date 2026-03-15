@@ -63,16 +63,18 @@ async def list_certificates(
 
     venafi_cfg, vault_cfg, vault_cl = _extract_venafi_deps(request)
     session = vc.authenticate(venafi_cfg, vault_cfg, vault_cl)
-
-    certs = vc.list_certificates(session, venafi_cfg, limit=limit, offset=offset)
-    items = [dataclasses.asdict(c) for c in certs]
-    CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="list", status="success").inc()
-    return PaginatedResponse(
-        items=items,
-        page=(offset // limit) + 1 if limit > 0 else 1,
-        per_page=limit,
-        total=len(items),
-    )
+    try:
+        certs = vc.list_certificates(session, venafi_cfg, limit=limit, offset=offset)
+        items = [dataclasses.asdict(c) for c in certs]
+        CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="list", status="success").inc()
+        return PaginatedResponse(
+            items=items,
+            page=(offset // limit) + 1 if limit > 0 else 1,
+            per_page=limit,
+            total=len(items),
+        )
+    finally:
+        session.close()
 
 
 @router.post("/certificates/search", response_model=PaginatedResponse)
@@ -90,28 +92,30 @@ async def search_certificates(
 
     venafi_cfg, vault_cfg, vault_cl = _extract_venafi_deps(request)
     session = vc.authenticate(venafi_cfg, vault_cfg, vault_cl)
-
-    certs = vc.search_certificates(
-        session,
-        venafi_cfg,
-        common_name=body.common_name or None,
-        san_dns=body.san_dns or None,
-        thumbprint=body.thumbprint or None,
-        serial_number=body.serial_number or None,
-        issuer=body.issuer or None,
-        key_size=body.key_size,
-        stage=body.stage,
-        limit=body.limit,
-        offset=body.offset,
-    )
-    items = [dataclasses.asdict(c) for c in certs]
-    CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="search", status="success").inc()
-    return PaginatedResponse(
-        items=items,
-        page=(body.offset // body.limit) + 1 if body.limit > 0 else 1,
-        per_page=body.limit,
-        total=len(items),
-    )
+    try:
+        certs = vc.search_certificates(
+            session,
+            venafi_cfg,
+            common_name=body.common_name or None,
+            san_dns=body.san_dns or None,
+            thumbprint=body.thumbprint or None,
+            serial_number=body.serial_number or None,
+            issuer=body.issuer or None,
+            key_size=body.key_size,
+            stage=body.stage,
+            limit=body.limit,
+            offset=body.offset,
+        )
+        items = [dataclasses.asdict(c) for c in certs]
+        CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="search", status="success").inc()
+        return PaginatedResponse(
+            items=items,
+            page=(body.offset // body.limit) + 1 if body.limit > 0 else 1,
+            per_page=body.limit,
+            total=len(items),
+        )
+    finally:
+        session.close()
 
 
 @router.get(
@@ -132,26 +136,30 @@ async def get_certificate(
 
     venafi_cfg, vault_cfg, vault_cl = _extract_venafi_deps(request)
     session = vc.authenticate(venafi_cfg, vault_cfg, vault_cl)
-
-    detail = vc.describe_certificate(session, venafi_cfg, certificate_guid=guid)
-    CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="describe", status="success").inc()
-    return VenafiCertificateDetailResponse(
-        guid=detail.guid,
-        dn=detail.dn,
-        name=detail.name,
-        serial_number=detail.serial_number,
-        thumbprint=detail.thumbprint,
-        valid_from=detail.valid_from,
-        valid_to=detail.valid_to,
-        issuer=detail.issuer,
-        subject=detail.subject,
-        key_algorithm=detail.key_algorithm,
-        key_size=detail.key_size,
-        san_dns_names=detail.san_dns_names,
-        stage=detail.stage,
-        status=detail.status,
-        in_error=detail.in_error,
-    )
+    try:
+        detail = vc.describe_certificate(session, venafi_cfg, certificate_guid=guid)
+        CERTIFICATE_OPS_TOTAL.labels(
+            provider="venafi", operation="describe", status="success"
+        ).inc()
+        return VenafiCertificateDetailResponse(
+            guid=detail.guid,
+            dn=detail.dn,
+            name=detail.name,
+            serial_number=detail.serial_number,
+            thumbprint=detail.thumbprint,
+            valid_from=detail.valid_from,
+            valid_to=detail.valid_to,
+            issuer=detail.issuer,
+            subject=detail.subject,
+            key_algorithm=detail.key_algorithm,
+            key_size=detail.key_size,
+            san_dns_names=detail.san_dns_names,
+            stage=detail.stage,
+            status=detail.status,
+            in_error=detail.in_error,
+        )
+    finally:
+        session.close()
 
 
 @router.post("/certificates/{guid}/renew", response_model=VenafiRenewResponse)
@@ -171,21 +179,23 @@ async def renew_certificate(
 
     venafi_cfg, vault_cfg, vault_cl = _extract_venafi_deps(request)
     session = vc.authenticate(venafi_cfg, vault_cfg, vault_cl)
-
-    bundle = vc.renew_and_download_certificate(
-        session,
-        venafi_cfg,
-        vault_cfg,
-        vault_cl,
-        certificate_guid=guid,
-    )
-    CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="renew", status="success").inc()
-    return VenafiRenewResponse(
-        guid=guid,
-        common_name=bundle.common_name,
-        serial_number=bundle.serial_number,
-        not_after=bundle.not_after.isoformat() if bundle.not_after else "",
-    )
+    try:
+        bundle = vc.renew_and_download_certificate(
+            session,
+            venafi_cfg,
+            vault_cfg,
+            vault_cl,
+            certificate_guid=guid,
+        )
+        CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="renew", status="success").inc()
+        return VenafiRenewResponse(
+            guid=guid,
+            common_name=bundle.common_name,
+            serial_number=bundle.serial_number,
+            not_after=bundle.not_after.isoformat() if bundle.not_after else "",
+        )
+    finally:
+        session.close()
 
 
 @router.post("/certificates/{guid}/revoke")
@@ -205,16 +215,18 @@ async def revoke_certificate(
 
     venafi_cfg, vault_cfg, vault_cl = _extract_venafi_deps(request)
     session = vc.authenticate(venafi_cfg, vault_cfg, vault_cl)
-
-    # Resolve DN from GUID for the revocation call
-    detail = vc.describe_certificate(session, venafi_cfg, certificate_guid=guid)
-    vc.revoke_certificate(
-        session,
-        venafi_cfg,
-        certificate_dn=detail.dn,
-        reason=body.reason,
-        comments=body.comments,
-        disable=body.disable,
-    )
-    CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="revoke", status="success").inc()
-    return {"status": "revoked", "guid": guid}
+    try:
+        # Resolve DN from GUID for the revocation call
+        detail = vc.describe_certificate(session, venafi_cfg, certificate_guid=guid)
+        vc.revoke_certificate(
+            session,
+            venafi_cfg,
+            certificate_dn=detail.dn,
+            reason=body.reason,
+            comments=body.comments,
+            disable=body.disable,
+        )
+        CERTIFICATE_OPS_TOTAL.labels(provider="venafi", operation="revoke", status="success").inc()
+        return {"status": "revoked", "guid": guid}
+    finally:
+        session.close()

@@ -255,7 +255,7 @@ class TestConfigValidate:
         ):
             result = clif.invoke_catch(["config", "validate"])
         assert result.exit_code == 1
-        assert "Validation failed" in result.stderr
+        assert "Validation failed" in result.output
 
 
 # ============================================================================
@@ -1007,7 +1007,7 @@ class TestVenafiRevoke:
         ):
             result = clif.invoke_catch(["venafi", "revoke"])
         assert result.exit_code == 1
-        assert "either --dn or --thumbprint" in result.stderr
+        assert "either --dn or --thumbprint" in result.output
 
 
 class TestVenafiDownload:
@@ -1045,7 +1045,7 @@ class TestCommandErrorHandling:
         ):
             result = clif.invoke_catch(["digicert", "list"])
         assert result.exit_code == 2
-        assert "api 500" in result.stderr
+        assert "api 500" in result.output
 
     def test_venafi_list_venafi_error(self, clif: _CliFixture):
         mock_vn = MagicMock()
@@ -1057,7 +1057,7 @@ class TestCommandErrorHandling:
         ):
             result = clif.invoke_catch(["venafi", "list"])
         assert result.exit_code == 2
-        assert "tpp down" in result.stderr
+        assert "tpp down" in result.output
 
     def test_acm_list_acm_error(self, clif: _CliFixture):
         mock_acm = MagicMock()
@@ -1065,7 +1065,7 @@ class TestCommandErrorHandling:
         with patch("certmesh.providers.acm_client", mock_acm, create=True):
             result = clif.invoke_catch(["acm", "list"])
         assert result.exit_code == 2
-        assert "aws fail" in result.stderr
+        assert "aws fail" in result.output
 
     def test_vault_pki_list_vault_error(self, clif: _CliFixture):
         mock_vc_mod = MagicMock()
@@ -1073,7 +1073,7 @@ class TestCommandErrorHandling:
         with patch("certmesh.backends.vault_client", mock_vc_mod, create=True):
             result = clif.invoke_catch(["vault-pki", "list"])
         assert result.exit_code == 1
-        assert "sealed" in result.stderr
+        assert "sealed" in result.output
 
     def test_unexpected_error_exits_3(self, clif: _CliFixture):
         mock_dc = MagicMock()
@@ -1084,7 +1084,7 @@ class TestCommandErrorHandling:
         ):
             result = clif.invoke_catch(["digicert", "list"])
         assert result.exit_code == 3
-        assert "oops" in result.stderr
+        assert "oops" in result.output
 
 
 # ============================================================================

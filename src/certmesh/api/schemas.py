@@ -8,7 +8,7 @@ Strict mode: no type coercion, reject unknown fields.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # =============================================================================
 # Common
@@ -207,10 +207,10 @@ class VaultPKIIssueRequest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    common_name: str
-    alt_names: list[str] = []
-    ip_sans: list[str] = []
-    ttl: str = ""
+    common_name: str = Field(min_length=1, max_length=253)
+    alt_names: list[str] = Field(default=[], max_length=100)
+    ip_sans: list[str] = Field(default=[], max_length=50)
+    ttl: str = Field(default="", pattern=r"^(\d+[smhd]?)?$")
 
 
 class VaultPKISignRequest(BaseModel):
@@ -223,10 +223,10 @@ class VaultPKISignRequest(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid")
 
     csr_pem: str
-    common_name: str
-    alt_names: list[str] = []
-    ip_sans: list[str] = []
-    ttl: str = ""
+    common_name: str = Field(min_length=1, max_length=253)
+    alt_names: list[str] = Field(default=[], max_length=100)
+    ip_sans: list[str] = Field(default=[], max_length=50)
+    ttl: str = Field(default="", pattern=r"^(\d+[smhd]?)?$")
 
 
 class VaultPKIRevokeRequest(BaseModel):
@@ -238,7 +238,7 @@ class VaultPKIRevokeRequest(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    serial_number: str
+    serial_number: str = Field(min_length=1, max_length=200)
 
 
 class VaultPKICertificateResponse(BaseModel):

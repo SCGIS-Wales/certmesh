@@ -190,7 +190,7 @@ jobs:
     needs: [lint, test]
     services:
       localstack:
-        image: localstack/localstack:latest
+        image: localstack/localstack:3.8
         ports:
           - 4566:4566
         env:
@@ -235,11 +235,11 @@ jobs:
     needs: [lint, test, docker-build]
     steps:
       - uses: actions/checkout@v4
-      - name: Create kind cluster (Kubernetes v1.34)
+      - name: Create kind cluster (Kubernetes v1.33)
         uses: helm/kind-action@v1
         with:
           cluster_name: certmesh-ci
-          node_image: kindest/node:v1.34.3
+          node_image: kindest/node:v1.33.0
           wait: 60s
       - name: Verify Kubernetes version
         run: |
@@ -247,11 +247,11 @@ jobs:
           K8S_VERSION=$(kubectl version -o json | jq -r '.serverVersion.gitVersion')
           echo "Kubernetes version: ${K8S_VERSION}"
           MINOR=$(echo "${K8S_VERSION}" | sed 's/v[0-9]*\.\([0-9]*\)\..*/\1/')
-          if [ "${MINOR}" -lt 34 ]; then
-            echo "ERROR: Kubernetes version ${K8S_VERSION} is below required v1.34.0"
+          if [ "${MINOR}" -lt 31 ]; then
+            echo "ERROR: Kubernetes version ${K8S_VERSION} is below required v1.31.0"
             exit 1
           fi
-          echo "✓ Kubernetes version ${K8S_VERSION} meets requirement (>=1.34.0)"
+          echo "✓ Kubernetes version ${K8S_VERSION} meets requirement (>=1.31.0)"
       - name: Install Vault in dev mode
         run: |
           set -e

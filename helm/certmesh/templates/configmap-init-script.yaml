@@ -116,35 +116,35 @@ data:
     vault write -format=json \
       "${PKI_MOUNT_POINT}/issue/${PKI_ROLE_NAME}" \
       ${ISSUE_ARGS} \
-      > /tmp/tls-response.json
+      > "${TLS_DIR}/.response.json"
 
-    json_field certificate /tmp/tls-response.json > "${TLS_DIR}/tls.crt"
-    json_field private_key /tmp/tls-response.json > "${TLS_DIR}/tls.key"
-    SERIAL=$(json_field serial_number /tmp/tls-response.json)
+    json_field certificate "${TLS_DIR}/.response.json" > "${TLS_DIR}/tls.crt"
+    json_field private_key "${TLS_DIR}/.response.json" > "${TLS_DIR}/tls.key"
+    SERIAL=$(json_field serial_number "${TLS_DIR}/.response.json")
     log "Leaf certificate issued successfully (serial=${SERIAL})."
 
     # ========================= STEP 3: BUILD CA CHAIN ===========================
     if [ "${FETCH_CA_CHAIN}" = "true" ]; then
       log "Fetching intermediate CA from ${INT_MOUNT_POINT}/cert/ca..."
-      vault read -field=certificate "${INT_MOUNT_POINT}/cert/ca" > /tmp/intermediate.crt
-      log "Intermediate CA fetched ($(wc -l < /tmp/intermediate.crt) lines)."
+      vault read -field=certificate "${INT_MOUNT_POINT}/cert/ca" > "${TLS_DIR}/.intermediate.crt"
+      log "Intermediate CA fetched ($(wc -l < "${TLS_DIR}/.intermediate.crt") lines)."
 
       log "Fetching root CA from ${ROOT_MOUNT_POINT}/cert/ca..."
-      vault read -field=certificate "${ROOT_MOUNT_POINT}/cert/ca" > /tmp/root.crt
-      log "Root CA fetched ($(wc -l < /tmp/root.crt) lines)."
+      vault read -field=certificate "${ROOT_MOUNT_POINT}/cert/ca" > "${TLS_DIR}/.root.crt"
+      log "Root CA fetched ($(wc -l < "${TLS_DIR}/.root.crt") lines)."
 
       # Ensure newline between PEM blocks (vault read omits trailing newline)
-      { cat /tmp/intermediate.crt; echo; cat /tmp/root.crt; } > "${TLS_DIR}/ca.crt"
+      { cat "${TLS_DIR}/.intermediate.crt"; echo; cat "${TLS_DIR}/.root.crt"; } > "${TLS_DIR}/ca.crt"
       log "CA bundle built: intermediate (${INT_MOUNT_POINT}) + root (${ROOT_MOUNT_POINT})."
     else
       log "Using issuing CA from certificate response (fetchCaChain=false)."
-      json_field issuing_ca /tmp/tls-response.json > "${TLS_DIR}/ca.crt"
+      json_field issuing_ca "${TLS_DIR}/.response.json" > "${TLS_DIR}/ca.crt"
     fi
 
     # ========================= STEP 4: PERMISSIONS & CLEANUP ====================
     chmod 600 "${TLS_DIR}/tls.key"
     chmod 644 "${TLS_DIR}/tls.crt" "${TLS_DIR}/ca.crt"
-    rm -f /tmp/tls-response.json /tmp/intermediate.crt /tmp/root.crt
+    rm -f "${TLS_DIR}/.response.json" "${TLS_DIR}/.intermediate.crt" "${TLS_DIR}/.root.crt"
 
     log "TLS certificate files written to ${TLS_DIR}/:"
     log "  cert: ${TLS_DIR}/tls.crt ($(wc -l < "${TLS_DIR}/tls.crt") lines)"

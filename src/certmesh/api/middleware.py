@@ -9,6 +9,7 @@ and API key expiry signaling.
 from __future__ import annotations
 
 import logging
+import re
 import time
 import uuid
 
@@ -181,12 +182,16 @@ def _build_error_body(
     return body
 
 
+_REQUEST_ID_RE = re.compile(r"^[a-zA-Z0-9\-_.]{1,128}$")
+
+
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Inject/propagate X-Request-ID, log requests, record metrics, signal API key expiry."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        # Generate or propagate request ID
-        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        # Generate or propagate request ID (sanitized to prevent log injection)
+        incoming = request.headers.get("X-Request-ID", "")
+        request_id = incoming if _REQUEST_ID_RE.match(incoming) else str(uuid.uuid4())
         request.state.request_id = request_id
 
         start = time.monotonic()
