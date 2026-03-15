@@ -3,7 +3,7 @@ name: certmesh
 description: TLS certificate lifecycle management API for DigiCert, Venafi, Vault PKI, and AWS ACM
 type: application
 version: 0.1.0
-appVersion: "3.0.12"
+appVersion: "3.0.13"
 kubeVersion: ">=1.34.0"
 keywords:
   - tls
