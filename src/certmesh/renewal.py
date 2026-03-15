@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _UNIT_SECONDS = {
     "hour": 3600,
     "day": 86400,
+    "week": 604800,  # 7 days
     "month": 2592000,  # 30 days
     "year": 31536000,  # 365 days
 }
@@ -124,20 +125,33 @@ def _check_provider(
     provider: str,
     policy: RenewalPolicy,
 ) -> list[RenewalResult]:
-    """Check a single provider for certificates needing renewal."""
+    """Check a single provider for certificates needing renewal.
+
+    Dispatches to provider-specific list/describe functions to enumerate
+    certificates, then checks each against the renewal policy.
+
+    Raises:
+        NotImplementedError: If the provider does not yet support
+            automated certificate enumeration.
+    """
     logger.info(
         "Checking provider for certificates approaching expiry", extra={"provider": provider}
     )
 
-    # Each provider-specific check is a stub that can be extended
-    # when the provider's list/describe capabilities are wired up.
-    # For now, return empty list (provider not configured or no certs found).
-    results: list[RenewalResult] = []
-
     provider_cfg = cfg.get(provider.replace("-", "_"), {})
     if not provider_cfg:
         logger.debug("Provider not configured, skipping", extra={"provider": provider})
-        return results
+        return []
+
+    results: list[RenewalResult] = []
+
+    if provider == "acm":
+        results = _check_acm(cfg, policy)
+    else:
+        logger.warning(
+            "Provider does not yet support automated renewal enumeration",
+            extra={"provider": provider},
+        )
 
     logger.info(
         "Provider certificate check complete",
@@ -147,4 +161,59 @@ def _check_provider(
             "needs_renewal": sum(1 for r in results if r.needs_renewal),
         },
     )
+    return results
+
+
+def _check_acm(
+    cfg: dict[str, Any],
+    policy: RenewalPolicy,
+) -> list[RenewalResult]:
+    """Check ACM certificates for upcoming expiry."""
+    from certmesh.providers import acm_client
+
+    acm_cfg = cfg.get("acm", {})
+    results: list[RenewalResult] = []
+
+    try:
+        summaries = acm_client.list_certificates(acm_cfg, statuses=["ISSUED"])
+    except Exception as exc:
+        logger.error("Failed to list ACM certificates", extra={"error": str(exc)})
+        return [
+            RenewalResult(
+                provider="acm",
+                identifier="*",
+                common_name="*",
+                not_after=None,
+                needs_renewal=False,
+                error=str(exc),
+            )
+        ]
+
+    for cert in summaries:
+        needs = should_renew(cert.not_after, policy)
+        result = RenewalResult(
+            provider="acm",
+            identifier=cert.certificate_arn,
+            common_name=cert.domain_name,
+            not_after=cert.not_after,
+            needs_renewal=needs,
+        )
+
+        if needs and not policy.dry_run:
+            try:
+                acm_client.renew_certificate(acm_cfg, cert.certificate_arn)
+                result.renewed = True
+                logger.info(
+                    "ACM certificate renewed",
+                    extra={"arn": cert.certificate_arn, "domain": cert.domain_name},
+                )
+            except Exception as exc:
+                result.error = str(exc)
+                logger.error(
+                    "ACM certificate renewal failed",
+                    extra={"arn": cert.certificate_arn, "error": str(exc)},
+                )
+
+        results.append(result)
+
     return results

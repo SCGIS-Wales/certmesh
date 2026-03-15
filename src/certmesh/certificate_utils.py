@@ -55,7 +55,7 @@ class SubjectInfo:
     san_dns_names: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, frozen=True)
 class CertificateBundle:
     """All material produced by a successful certificate issuance."""
 
@@ -315,7 +315,10 @@ def _write_to_filesystem(
             chain_path = base / output_cfg["chain_filename"].format(
                 order_id=sid, guid=sid, cert_arn_short=sid
             )
-            chain_path.write_text(bundle.chain_pem, encoding="utf-8")
+            # Write chain with restricted permissions (0600) like the key file
+            chain_fd = os.open(chain_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(chain_fd, "w", encoding="utf-8") as cf:
+                cf.write(bundle.chain_pem)
             written_files.append(chain_path)
             logger.info("Wrote CA chain PEM", extra={"path": str(chain_path)})
             result["filesystem_chain"] = str(chain_path)

@@ -322,6 +322,12 @@ def authenticate(
       required for TPP 22.3+).  Returns a Bearer token.
     * ``"ldap"`` — Uses ``POST /vedsdk/authorize`` (pre-22.3 only).
       Returns an API key.  **Removed in TPP 22.3.**
+
+    .. note::
+       The caller is responsible for closing the returned session (e.g. via a
+       ``with`` statement or an explicit ``session.close()`` call) to release
+       the underlying connection pool.  On authentication failure the session
+       is closed automatically before the exception is re-raised.
     """
     session = _build_session(venafi_cfg)
     base = _base_url(venafi_cfg)
@@ -333,33 +339,37 @@ def authenticate(
 
     auth_method: str = venafi_cfg.get("auth_method", "oauth")
 
-    if auth_method == "oauth":
-        # OAuth 2.0 via /vedauth/authorize/oauth — supported on TPP 20.1+,
-        # required on TPP 22.3+ (v23, v25.3).
-        _authenticate_oauth(
-            session,
-            base,
-            username,
-            password,
-            venafi_cfg,
-            timeout=timeout,
-        )
-    elif auth_method == "ldap":
-        # Legacy API-key via /vedsdk/authorize — supported on TPP < 22.3
-        # only.  Deprecated in TPP 20.1, removed in TPP 22.3.
-        _authenticate_ldap(
-            session,
-            base,
-            username,
-            password,
-            timeout=timeout,
-        )
-    else:
-        raise ConfigurationError(
-            f"Unsupported venafi.auth_method '{auth_method}'. "
-            f"Supported: 'oauth' (TPP 20.1+, required 22.3+), "
-            f"'ldap' (TPP < 22.3 only)."
-        )
+    try:
+        if auth_method == "oauth":
+            # OAuth 2.0 via /vedauth/authorize/oauth — supported on TPP 20.1+,
+            # required on TPP 22.3+ (v23, v25.3).
+            _authenticate_oauth(
+                session,
+                base,
+                username,
+                password,
+                venafi_cfg,
+                timeout=timeout,
+            )
+        elif auth_method == "ldap":
+            # Legacy API-key via /vedsdk/authorize — supported on TPP < 22.3
+            # only.  Deprecated in TPP 20.1, removed in TPP 22.3.
+            _authenticate_ldap(
+                session,
+                base,
+                username,
+                password,
+                timeout=timeout,
+            )
+        else:
+            raise ConfigurationError(
+                f"Unsupported venafi.auth_method '{auth_method}'. "
+                f"Supported: 'oauth' (TPP 20.1+, required 22.3+), "
+                f"'ldap' (TPP < 22.3 only)."
+            )
+    except Exception:
+        session.close()
+        raise
 
     return session
 
@@ -373,7 +383,9 @@ def _build_retry_decorator(venafi_cfg: JsonDict):
     """Return a tenacity ``retry`` decorator from the venafi retry config."""
     retry_cfg: JsonDict = venafi_cfg.get("retry", {})
     return retry(
-        retry=retry_if_exception_type((requests.ConnectionError, requests.Timeout)),
+        retry=retry_if_exception_type(
+            (requests.ConnectionError, requests.Timeout, requests.exceptions.HTTPError)
+        ),
         stop=stop_after_attempt(int(retry_cfg.get("max_attempts", 5))),
         wait=wait_exponential(
             multiplier=float(retry_cfg.get("wait_multiplier", 1.5)),
@@ -391,6 +403,21 @@ def _build_circuit_breaker(venafi_cfg: JsonDict):
         failure_threshold=int(cb_cfg.get("failure_threshold", 5)),
         recovery_timeout_seconds=float(cb_cfg.get("recovery_timeout_seconds", 120)),
         name="venafi-tpp",
+    )
+
+
+def _parse_certificate_summary(entry: JsonDict) -> VenafiCertificateSummary:
+    """Parse a raw API entry into a ``VenafiCertificateSummary``."""
+    return VenafiCertificateSummary(
+        guid=entry.get("Guid", entry.get("guid", "")),
+        dn=entry.get("DN", entry.get("dn", "")),
+        name=entry.get("Name", entry.get("name", "")),
+        created_on=entry.get("CreatedOn", entry.get("created_on", "")),
+        schema_class=entry.get("SchemaClass", entry.get("schema_class", "")),
+        approx_not_after=entry.get(
+            "X509.NotAfter",
+            entry.get("ValidTo", ""),
+        ),
     )
 
 
@@ -552,9 +579,13 @@ def _poll_certificate_ready(
     max_wait: int = int(polling_cfg.get("max_wait_seconds", 1800))
 
     detail_url = f"{base}/vedsdk/certificates"
-    elapsed = 0
+    start_time = time.monotonic()
 
-    while elapsed < max_wait:
+    while True:
+        elapsed = time.monotonic() - start_time
+        if elapsed >= max_wait:
+            break
+
         params: JsonDict = {"ObjectDN": certificate_dn}
         resp = session.get(detail_url, params=params, timeout=timeout)
 
@@ -590,7 +621,6 @@ def _poll_certificate_ready(
             )
 
         time.sleep(interval)
-        elapsed += interval
 
     raise VenafiPollingTimeoutError(
         f"Certificate DN='{certificate_dn}' did not reach ready state within {max_wait}s."
@@ -901,22 +931,7 @@ def list_certificates(
 
         data: JsonDict = resp.json()
         raw_certs: list[JsonDict] = data.get("Certificates", data.get("certificates", []))
-
-        summaries: list[VenafiCertificateSummary] = []
-        for entry in raw_certs:
-            summaries.append(
-                VenafiCertificateSummary(
-                    guid=entry.get("Guid", entry.get("guid", "")),
-                    dn=entry.get("DN", entry.get("dn", "")),
-                    name=entry.get("Name", entry.get("name", "")),
-                    created_on=entry.get("CreatedOn", entry.get("created_on", "")),
-                    schema_class=entry.get("SchemaClass", entry.get("schema_class", "")),
-                    approx_not_after=entry.get(
-                        "X509.NotAfter",
-                        entry.get("ValidTo", ""),
-                    ),
-                )
-            )
+        summaries = [_parse_certificate_summary(entry) for entry in raw_certs]
 
         logger.info(
             "Venafi: listed certificates.",
@@ -1003,22 +1018,7 @@ def search_certificates(
 
         data: JsonDict = resp.json()
         raw_certs: list[JsonDict] = data.get("Certificates", data.get("certificates", []))
-
-        summaries: list[VenafiCertificateSummary] = []
-        for entry in raw_certs:
-            summaries.append(
-                VenafiCertificateSummary(
-                    guid=entry.get("Guid", entry.get("guid", "")),
-                    dn=entry.get("DN", entry.get("dn", "")),
-                    name=entry.get("Name", entry.get("name", "")),
-                    created_on=entry.get("CreatedOn", entry.get("created_on", "")),
-                    schema_class=entry.get("SchemaClass", entry.get("schema_class", "")),
-                    approx_not_after=entry.get(
-                        "X509.NotAfter",
-                        entry.get("ValidTo", ""),
-                    ),
-                )
-            )
+        summaries = [_parse_certificate_summary(entry) for entry in raw_certs]
 
         logger.info(
             "Venafi: search returned certificates.",

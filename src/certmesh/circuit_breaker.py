@@ -57,6 +57,7 @@ def create_circuit_breaker(
         "circuit": _State.CLOSED,
         "failure_count": 0,
         "last_failure_time": None,
+        "probe_in_flight": False,
     }
     _lock = threading.Lock()
 
@@ -68,8 +69,10 @@ def create_circuit_breaker(
             )
         _state["circuit"] = _State.CLOSED
         _state["failure_count"] = 0
+        _state["probe_in_flight"] = False
 
     def _on_failure() -> None:
+        _state["probe_in_flight"] = False
         _state["failure_count"] += 1
         _state["last_failure_time"] = time.monotonic()
 
@@ -91,7 +94,8 @@ def create_circuit_breaker(
                 },
             )
 
-    def _check_and_maybe_advance() -> None:
+    def _check_and_maybe_advance() -> bool:
+        """Check state and advance if needed. Returns True if this call is a HALF_OPEN probe."""
         circuit = _state["circuit"]
         if circuit == _State.OPEN:
             elapsed: float = time.monotonic() - _state["last_failure_time"]
@@ -102,19 +106,31 @@ def create_circuit_breaker(
                     "Circuit breaker recovery timeout elapsed, transitioning OPEN to HALF_OPEN",
                     extra={"breaker_name": name},
                 )
+                # Fall through to the HALF_OPEN handling below.
+                circuit = _State.HALF_OPEN
             else:
                 raise CircuitBreakerOpenError(
                     f"Circuit breaker '{name}' is OPEN. Next probe allowed in {remaining:.1f}s."
                 )
-        elif circuit == _State.HALF_OPEN:
+
+        if circuit == _State.HALF_OPEN:
+            if _state["probe_in_flight"]:
+                # Another thread is already executing the single allowed probe.
+                raise CircuitBreakerOpenError(
+                    f"Circuit breaker '{name}' is HALF_OPEN. A probe is already in flight."
+                )
+            _state["probe_in_flight"] = True
             logger.debug(
                 "Circuit breaker allowing HALF_OPEN probe call", extra={"breaker_name": name}
             )
+            return True
+
+        return False
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             with _lock:
-                _check_and_maybe_advance()
+                is_probe = _check_and_maybe_advance()
 
             try:
                 result = func(*args, **kwargs)
@@ -131,6 +147,13 @@ def create_circuit_breaker(
                         "exception_message": str(exc),
                     },
                 )
+                raise
+            except BaseException:
+                # Ensure probe_in_flight is cleared for non-Exception base exceptions
+                # (e.g. KeyboardInterrupt, SystemExit) so the circuit can recover.
+                if is_probe:
+                    with _lock:
+                        _state["probe_in_flight"] = False
                 raise
             else:
                 with _lock:

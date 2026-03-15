@@ -92,11 +92,12 @@ def sync_validation_records(
 def delete_validation_records(
     hosted_zone_id: str,
     records: list[JsonDict],
-    region: str = "us-east-1",
 ) -> int:
     """Delete CNAME validation records from Route53 after certificate issuance.
 
     Returns the number of records deleted.
+
+    Note: Route53 is a global AWS service — no region parameter is needed.
     """
     if not records:
         return 0

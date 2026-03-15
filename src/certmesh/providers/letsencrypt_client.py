@@ -186,8 +186,8 @@ def request_certificate(
         extra={"common_name": common_name, "sans": san or [], "challenge_type": challenge_type},
     )
 
-    # Generate certificate private key
-    cert_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    # Generate certificate private key (4096-bit, consistent with other providers)
+    cert_key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
 
     # Build CSR
     csr_builder = x509.CertificateSigningRequestBuilder().subject_name(
